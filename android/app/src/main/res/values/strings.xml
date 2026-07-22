@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Sales Canvas</string>
+    <string name="title_activity_main">Sales Canvas</string>
+    <string name="package_name">id.my.smartoutsource.salescanvas</string>
+    <string name="custom_url_scheme">id.my.smartoutsource.salescanvas</string>
+</resources>

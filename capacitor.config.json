@@ -1,0 +1,8 @@
+{
+  "appId": "id.my.smartoutsource.salescanvas",
+  "appName": "Sales Canvas",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

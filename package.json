@@ -1,0 +1,16 @@
+{
+  "name": "sales-canvas-mobile",
+  "version": "2.0.0",
+  "description": "Sales Canvas - aplikasi mobile customer canvassing",
+  "scripts": {
+    "sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/geolocation": "^6.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Sales Canvas",
+  "short_name": "SalesCanvas",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f2f2f7",
+  "theme_color": "#ffffff",
+  "orientation": "portrait",
+  "icons": []
+}

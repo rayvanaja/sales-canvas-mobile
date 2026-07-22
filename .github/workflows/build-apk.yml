@@ -1,0 +1,43 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ambil kode dari repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependency npm
+        run: npm install
+
+      - name: Sinkronkan Capacitor
+        run: npx cap sync android
+
+      - name: Beri izin eksekusi gradlew
+        run: chmod +x android/gradlew
+
+      - name: Compile APK (debug)
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload hasil APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sales-canvas-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
