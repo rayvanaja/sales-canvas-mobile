@@ -146,9 +146,20 @@ function tabBarHtml(active) {
 async function renderHome() {
   app.innerHTML = `<div class="topbar"><p class="date">Memuat...</p></div>`;
 
+  if (state.user?.role === 'SALES') {
+    getCurrentLocation((latitude, longitude) => {
+      api('/users/me/location', { method: 'POST', body: JSON.stringify({ latitude, longitude }) }).catch(() => {});
+    }, () => {});
+  }
+
   try {
-    const [customers, visits] = await Promise.all([api('/customers'), api('/visits')]);
+    const [customers, visits, messages] = await Promise.all([api('/customers'), api('/visits'), api('/messages').catch(() => [])]);
     state.customers = customers;
+    const broadcastHtml = messages && messages[0] ? `
+      <div class="card" style="background:#fff8e5;border:1px solid #ffe4a3;margin:0 16px 10px;">
+        <p style="margin:0 0 2px;font-size:12px;color:#8e6a00;font-weight:600;">Pengumuman dari ${messages[0].fromName}</p>
+        <p style="margin:0;font-size:13px;">${messages[0].text}</p>
+      </div>` : '';
 
     const today = new Date().toDateString();
     const visitedTodayIds = new Set(
@@ -192,6 +203,7 @@ async function renderHome() {
           <p class="stat-value">${state.customers.length}</p>
         </div>
       </div>
+      ${broadcastHtml}
       <p class="section-label">Daftar customer</p>
       <div style="padding:0 16px 10px;">
         <button class="btn-secondary" style="height:44px;" onclick="navigate('#/add-customer')">+ Tambah customer baru</button>
