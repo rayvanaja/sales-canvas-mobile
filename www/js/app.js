@@ -71,6 +71,7 @@ function render() {
   else if (parts[0] === 'edit-customer') renderEditCustomerForm(parts[1]);
   else if (parts[0] === 'checkin') renderCheckinForm(parts[1]);
   else if (parts[0] === 'order') renderOrderForm(parts[1], parts[2]);
+  else if (parts[0] === 'receipt') renderReceipt(parts[1]);
   else if (parts[0] === 'history') renderHistory();
   else if (parts[0] === 'profile') renderProfile();
   else renderHome();
@@ -261,6 +262,68 @@ async function showAiRecommendation() {
     box.innerHTML = `<div class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${data.recommendation}</div>`;
   } catch (err) {
     box.innerHTML = `<div class="error-box">${err.message}</div>`;
+  }
+}
+
+// ====== STRUK / BUKTI PESANAN ======
+async function renderReceipt(orderId) {
+  app.innerHTML = `<div style="padding:22px 20px;"><p style="color:var(--text-muted);font-size:14px;">Memuat struk...</p></div>`;
+
+  try {
+    const o = await api('/orders/' + orderId);
+    const orderNumber = 'SC-' + new Date(o.createdAt).toISOString().slice(0, 10).replace(/-/g, '') + '-' + o.id.slice(-4).toUpperCase();
+    const tanggal = new Date(o.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const payLabel = { CASH: 'Cash', TEMPO: 'Tempo', CONSIGNMENT: 'Konsinyasi' }[o.paymentMethod] || o.paymentMethod;
+
+    const itemRows = o.items.map(it => `
+      <div style="margin-bottom:5px;">
+        <div>${it.product.name}</div>
+        <div style="display:flex;justify-content:space-between;color:#555;">
+          <span>${it.quantity} x ${formatRupiah(it.price)}</span><span>${formatRupiah(it.price * it.quantity)}</span>
+        </div>
+      </div>`).join('');
+
+    app.innerHTML = `
+      <div class="receipt-noprint" style="flex-shrink:0;display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #ECECEC;background:#fff;">
+        <button onclick="navigate('#/home')" style="border:none;background:none;font-size:18px;color:#303030;cursor:pointer;">←</button>
+        <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:16px;color:#1a1a1a;">Bukti Pesanan</div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center;">
+        <div id="receipt-print-area" style="background:#fff;width:280px;padding:16px 14px;font-family:'Courier New',monospace;font-size:11.5px;color:#1a1a1a;border:1px solid #eee;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          <div style="text-align:center;margin-bottom:10px;">
+            <div style="font-weight:700;font-size:14px;letter-spacing:0.5px;">DAMAR FLOUR MILLS</div>
+            <div style="font-size:10px;color:#555;">PT. Damar Ampat Sekawan</div>
+            <div style="font-size:10px;color:#555;">Sales Canvas System</div>
+          </div>
+          <div style="border-top:1px dashed #999;margin:8px 0;"></div>
+          <div style="text-align:center;font-weight:700;font-size:12px;margin-bottom:6px;">BUKTI PESANAN</div>
+          <div>No. Order : ${orderNumber}</div>
+          <div>Tanggal&nbsp;&nbsp;: ${tanggal}</div>
+          <div>Sales&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${o.sales.name}</div>
+          <div style="border-top:1px dashed #999;margin:8px 0;"></div>
+          <div style="font-weight:700;">Customer:</div>
+          <div>${o.customer.name}</div>
+          <div style="color:#555;">${o.customer.address}</div>
+          <div style="color:#555;">${o.customer.city}, ${o.customer.province}</div>
+          <div style="border-top:1px dashed #999;margin:8px 0;"></div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:4px;"><span>Item</span><span>Subtotal</span></div>
+          ${itemRows}
+          <div style="border-top:1px dashed #999;margin:8px 0;"></div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px;"><span>TOTAL</span><span>${formatRupiah(o.totalAmount)}</span></div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px;"><span>Metode Bayar</span><span>${payLabel}</span></div>
+          <div style="border-top:1px dashed #999;margin:8px 0;"></div>
+          <div style="text-align:center;font-size:10px;color:#555;">Bukti ini sah tanpa tanda tangan.<br>Terima kasih atas pesanan Anda.</div>
+        </div>
+
+        <div class="receipt-noprint" style="width:280px;margin-top:16px;display:flex;flex-direction:column;gap:10px;">
+          <button onclick="window.print()" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Cetak Struk</button>
+          <button onclick="navigate('#/home')" style="width:100%;padding:13px;border:1.5px solid #D8D8D8;border-radius:11px;background:#fff;color:#303030;font-weight:700;font-size:13.5px;cursor:pointer;">Kembali ke Home</button>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    app.innerHTML = `<div style="padding:20px;"><div class="error-box">${err.message}</div></div>`;
   }
 }
 
@@ -724,11 +787,11 @@ async function submitOrder(customerId, visitId) {
   btn.textContent = 'Mengirim...';
 
   try {
-    await api('/orders', {
+    const order = await api('/orders', {
       method: 'POST',
       body: JSON.stringify({ customerId, visitId: (visitId && visitId !== 'none') ? visitId : null, paymentMethod, items }),
     });
-    navigate('#/home');
+    navigate('#/receipt/' + order.id);
   } catch (err) {
     errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
     btn.disabled = false;
@@ -764,9 +827,50 @@ async function renderHistory() {
 }
 
 // ====== PROFIL ======
-function renderProfile() {
+async function renderProfile() {
   const initials = (state.user?.name || '-').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
   const roleLabel = { SALES: 'Sales Lapangan', TEAM_LEADER: 'Team Leader', MANAGER: 'Manager', DIREKTUR: 'Direktur' }[state.user?.role] || state.user?.role;
+
+  let targetHtml = '';
+  if (state.user?.role === 'SALES') {
+    try {
+      const t = await api('/targets/me');
+      const visitPct = t.targetVisits > 0 ? Math.min(100, Math.round((t.actualVisits / t.targetVisits) * 100)) : 0;
+      const revenuePct = t.targetRevenue > 0 ? Math.min(100, Math.round((t.actualRevenue / t.targetRevenue) * 100)) : 0;
+      const overallPct = t.targetRevenue > 0 ? Math.round((t.actualRevenue / t.targetRevenue) * 100) : 0;
+      const monthLabel = new Date(t.periodMonth + '-01').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+
+      targetHtml = `
+        <div style="font-size:12px;font-weight:700;color:#303030;margin-bottom:8px;">Target &amp; Pencapaian — ${monthLabel}</div>
+        <div style="background:#fff;border:1px solid #ECECEC;border-radius:14px;padding:16px;margin-bottom:20px;">
+          ${t.targetVisits === 0 && t.targetRevenue === 0 ? '<p style="color:#999;font-size:12.5px;">Target belum diset oleh Team Leader/Manager.</p>' : `
+          <div style="margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+              <span style="color:#777777;">Kunjungan</span>
+              <span style="font-weight:700;color:#1a1a1a;">${t.actualVisits} / ${t.targetVisits}</span>
+            </div>
+            <div style="height:7px;border-radius:4px;background:#F1F1EE;overflow:hidden;">
+              <div style="height:100%;width:${visitPct}%;background:linear-gradient(90deg,#7AB41D,#057C43);"></div>
+            </div>
+          </div>
+          <div style="margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+              <span style="color:#777777;">Revenue</span>
+              <span style="font-weight:700;color:#1a1a1a;">${formatRupiah(t.actualRevenue)} / ${formatRupiah(t.targetRevenue)}</span>
+            </div>
+            <div style="height:7px;border-radius:4px;background:#F1F1EE;overflow:hidden;">
+              <div style="height:100%;width:${revenuePct}%;background:linear-gradient(90deg,#B57837,#FFE370);"></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #F1F1EE;padding-top:12px;">
+            <span style="font-size:12px;color:#777777;">Pencapaian keseluruhan</span>
+            <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${overallPct >= 100 ? 'oklch(93% 0.05 145 / 0.6)' : '#FBEBD5'};color:${overallPct >= 100 ? '#057C43' : '#8a5c26'};">${overallPct}% dari target</span>
+          </div>`}
+        </div>`;
+    } catch (err) {
+      targetHtml = '';
+    }
+  }
 
   app.innerHTML = `
     <div style="flex:1;overflow-y:auto;padding:22px 20px 16px;">
@@ -776,6 +880,7 @@ function renderProfile() {
         <div style="font-size:13px;color:#888888;margin-top:2px;">${state.user?.email || '-'}</div>
         <span style="margin-top:10px;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;background:oklch(93% 0.05 145 / 0.5);color:#057C43;">${roleLabel}</span>
       </div>
+      ${targetHtml}
       <button onclick="logout()" style="width:100%;padding:13px;border:1.5px solid #E28686;border-radius:11px;background:#fff;color:#B3261E;font-weight:700;font-size:14px;cursor:pointer;">Keluar</button>
     </div>
     ${tabBarHtml('profile')}
