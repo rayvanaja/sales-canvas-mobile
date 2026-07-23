@@ -1,3 +1,16 @@
+:root {
+  --brand-green: #057C43;
+  --brand-green-dark: #0a5c33;
+  --brand-green-deep: #052d1c;
+  --brand-lime: #7AB41D;
+  --brand-gold-1: #B57837;
+  --brand-gold-2: #FFE370;
+  --text-dark: #303030;
+  --text-muted: #777777;
+  --text-faint: #999999;
+  --border-light: #E4E4E4;
+}
+
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -7,9 +20,9 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #f2f2f7;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: #1c1c1e;
+  background: #F7F7F5;
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text-dark);
 }
 
 #app {
@@ -52,7 +65,7 @@ html, body {
 .login-wrap { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 24px; }
 .login-title { font-size: 26px; font-weight: 700; text-align: center; margin: 0 0 4px; }
 .login-sub { font-size: 14px; color: #8e8e93; text-align: center; margin: 0 0 32px; }
-.error-box { background: #fdecec; color: #c0392b; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 14px; }
+.error-box { background: #FCEBEA; color: #B3261E; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 14px; font-weight: 600; }
 
 .topbar-nav { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; }
 .back-btn { background: none; border: none; font-size: 22px; color: #007aff; padding: 0; }
