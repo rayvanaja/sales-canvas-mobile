@@ -17,6 +17,7 @@ const app = document.getElementById('app');
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
 
   const res = await fetch(API + path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
@@ -208,11 +209,26 @@ async function renderHome() {
       <div style="padding:0 16px 10px;">
         <button class="btn-secondary" style="height:44px;" onclick="navigate('#/add-customer')">+ Tambah customer baru</button>
       </div>
+      <div style="padding:0 16px 10px;">
+        <button class="btn-secondary" style="height:44px;color:#5661d6;" onclick="showAiRecommendation()">✦ Rekomendasi AI hari ini</button>
+      </div>
+      <div id="ai-recommendation-box" style="padding:0 16px;"></div>
       <div class="list-wrap">${rows || '<p class="muted" style="padding:8px 0;">Belum ada customer ditugaskan ke Anda.</p>'}</div>
       ${tabBarHtml('home')}
     `;
   } catch (err) {
     app.innerHTML = `<div class="topbar"><div class="error-box">${err.message}</div></div>${tabBarHtml('home')}`;
+  }
+}
+
+async function showAiRecommendation() {
+  const box = document.getElementById('ai-recommendation-box');
+  box.innerHTML = `<div class="card"><p style="margin:0;font-size:13px;color:#8e8e93;">Menganalisa...</p></div>`;
+  try {
+    const data = await api('/ai/sales-recommendation', { method: 'POST' });
+    box.innerHTML = `<div class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${data.recommendation}</div>`;
+  } catch (err) {
+    box.innerHTML = `<div class="error-box">${err.message}</div>`;
   }
 }
 
@@ -424,6 +440,7 @@ async function submitNewCustomer() {
   try {
     const headers = {};
     if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
     const res = await fetch(API + '/customers', { method: 'POST', headers, body: formData });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
@@ -518,6 +535,7 @@ async function submitEditCustomer(customerId) {
   try {
     const headers = {};
     if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
     const res = await fetch(API + '/customers/' + customerId, { method: 'PUT', headers, body: formData });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
