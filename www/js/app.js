@@ -200,7 +200,7 @@ async function renderHome() {
           <div style="width:38px;height:38px;border-radius:50%;background:${avatarColor};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;">${initials}</div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:700;color:#1a1a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.name}</div>
-            <div style="font-size:12px;color:#888888;">${c.city}</div>
+            <div style="font-size:12px;color:#888888;">${c.city?.name || '-'}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
             <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${gc.bg};color:${gc.color};">${catName}</span>
@@ -305,7 +305,7 @@ async function renderReceipt(orderId) {
           <div style="font-weight:700;">Customer:</div>
           <div>${o.customer.name}</div>
           <div style="color:#555;">${o.customer.address}</div>
-          <div style="color:#555;">${o.customer.city}, ${o.customer.province}</div>
+          <div style="color:#555;">${o.customer.city.name}, ${o.customer.city.province.name}</div>
           <div style="border-top:1px dashed #999;margin:8px 0;"></div>
           <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:4px;"><span>Item</span><span>Subtotal</span></div>
           ${itemRows}
@@ -361,7 +361,7 @@ async function renderCustomerDetail(customerId) {
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:1px;background:#ECECEC;border-radius:12px;overflow:hidden;margin-bottom:18px;">
-          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Alamat</div><div style="font-size:13.5px;color:#303030;">${c.address}, ${c.city}, ${c.province}</div></div>
+          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Alamat</div><div style="font-size:13.5px;color:#303030;">${c.address}, ${c.city?.name || '-'}, ${c.city?.province?.name || '-'}</div></div>
           <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">No. Telepon</div><div style="font-size:13.5px;color:#303030;">${c.phone}</div></div>
           <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Sales Bertanggung Jawab</div><div style="font-size:13.5px;color:#303030;">${c.sales?.name || '-'}</div></div>
         </div>
@@ -382,14 +382,31 @@ async function renderCustomerDetail(customerId) {
 // ====== TAMBAH CUSTOMER ======
 let addCustomerLocation = null;
 
+async function loadCityOptions(provinceSelectId, citySelectId, selectedCityId) {
+  const provinceId = document.getElementById(provinceSelectId).value;
+  const citySelect = document.getElementById(citySelectId);
+  if (!provinceId) {
+    citySelect.innerHTML = '<option value="">Pilih provinsi dulu</option>';
+    return;
+  }
+  citySelect.innerHTML = '<option value="">Memuat...</option>';
+  try {
+    const cities = await api('/regions/cities?provinceId=' + provinceId);
+    citySelect.innerHTML = '<option value="">Pilih kota</option>' + cities.map(c => `<option value="${c.id}" ${c.id === selectedCityId ? 'selected' : ''}>${c.name}</option>`).join('');
+  } catch (err) {
+    citySelect.innerHTML = '<option value="">Gagal memuat kota</option>';
+  }
+}
+
 async function renderAddCustomerForm() {
   app.innerHTML = `<div class="topbar-nav"><button class="back-btn" onclick="navigate('#/home')">‹</button><p class="title">Memuat...</p></div>`;
 
   try {
-    const categories = await api('/customer-categories');
+    const [categories, provinces] = await Promise.all([api('/customer-categories'), api('/regions/provinces')]);
     state.categories = categories;
 
     const categoryOptions = categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
+    const provinceOptions = provinces.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
     const fieldLabel = (text) => `<div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#777777;margin-bottom:6px;">${text}</div>`;
     const inputStyle = `width:100%;box-sizing:border-box;padding:12px 13px;border-radius:11px;border:1.5px solid #E4E4E4;font-family:'Manrope',sans-serif;font-size:14.5px;color:#303030;`;
 
@@ -415,8 +432,18 @@ async function renderAddCustomerForm() {
             <textarea id="new-customer-address" placeholder="Jalan, nomor, RT/RW" rows="2" style="${inputStyle}resize:none;"></textarea>
           </div>
           <div style="display:flex;gap:10px;">
-            <div style="flex:1;">${fieldLabel('Kota')}<input type="text" id="new-customer-city" style="${inputStyle}"></div>
-            <div style="flex:1;">${fieldLabel('Provinsi')}<input type="text" id="new-customer-province" style="${inputStyle}"></div>
+            <div style="flex:1;">
+              ${fieldLabel('Provinsi')}
+              <select id="new-customer-province" style="${inputStyle}background:#fff;" onchange="loadCityOptions('new-customer-province','new-customer-city')">
+                <option value="">Pilih provinsi</option>${provinceOptions}
+              </select>
+            </div>
+            <div style="flex:1;">
+              ${fieldLabel('Kota/Kab')}
+              <select id="new-customer-city" style="${inputStyle}background:#fff;">
+                <option value="">Pilih provinsi dulu</option>
+              </select>
+            </div>
           </div>
           <div>
             ${fieldLabel('No. Telepon')}
@@ -457,14 +484,14 @@ async function renderAddCustomerForm() {
 async function checkNearbyBeforeSubmit() {
   const name = document.getElementById('new-customer-name').value.trim();
   const address = document.getElementById('new-customer-address').value.trim();
-  const city = document.getElementById('new-customer-city').value.trim();
-  const province = document.getElementById('new-customer-province').value.trim();
+  const provinceId = document.getElementById('new-customer-province').value;
+  const cityId = document.getElementById('new-customer-city').value;
   const phone = document.getElementById('new-customer-phone').value.trim();
   const photoInput = document.getElementById('new-customer-photo');
   const errorBox = document.getElementById('add-customer-error');
   errorBox.innerHTML = '';
 
-  if (!name || !address || !city || !province || !phone) {
+  if (!name || !address || !provinceId || !cityId || !phone) {
     errorBox.innerHTML = `<div class="error-box">Semua field wajib diisi.</div>`;
     return;
   }
@@ -521,8 +548,7 @@ async function submitNewCustomer() {
   const categoryId = document.getElementById('new-customer-category').value;
   const name = document.getElementById('new-customer-name').value.trim();
   const address = document.getElementById('new-customer-address').value.trim();
-  const city = document.getElementById('new-customer-city').value.trim();
-  const province = document.getElementById('new-customer-province').value.trim();
+  const cityId = document.getElementById('new-customer-city').value;
   const phone = document.getElementById('new-customer-phone').value.trim();
   const photoFile = document.getElementById('new-customer-photo').files[0];
   const errorBox = document.getElementById('add-customer-error');
@@ -532,8 +558,7 @@ async function submitNewCustomer() {
   formData.append('categoryId', categoryId);
   formData.append('name', name);
   formData.append('address', address);
-  formData.append('city', city);
-  formData.append('province', province);
+  formData.append('cityId', cityId);
   formData.append('phone', phone);
   formData.append('latitude', addCustomerLocation.latitude);
   formData.append('longitude', addCustomerLocation.longitude);
@@ -558,11 +583,13 @@ async function renderEditCustomerForm(customerId) {
   app.innerHTML = `<div class="topbar-nav"><button class="back-btn" onclick="navigate('#/customer/${customerId}')">‹</button><p class="title">Memuat...</p></div>`;
 
   try {
-    const [c, categories] = await Promise.all([api('/customers/' + customerId), api('/customer-categories')]);
+    const [c, categories, provinces] = await Promise.all([api('/customers/' + customerId), api('/customer-categories'), api('/regions/provinces')]);
 
     const categoryOptions = categories.map(cat =>
       `<option value="${cat.id}" ${cat.id === c.categoryId ? 'selected' : ''}>${cat.name}</option>`
     ).join('');
+    const currentProvinceId = c.city?.provinceId || c.city?.province?.id || '';
+    const provinceOptions = provinces.map(p => `<option value="${p.id}" ${p.id === currentProvinceId ? 'selected' : ''}>${p.name}</option>`).join('');
     const fieldLabel = (text) => `<div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#777777;margin-bottom:6px;">${text}</div>`;
     const inputStyle = `width:100%;box-sizing:border-box;padding:12px 13px;border-radius:11px;border:1.5px solid #E4E4E4;font-family:'Manrope',sans-serif;font-size:14.5px;color:#303030;`;
 
@@ -573,8 +600,18 @@ async function renderEditCustomerForm(customerId) {
         <div>${fieldLabel('Nama Customer')}<input type="text" id="edit-customer-name" value="${c.name}" style="${inputStyle}"></div>
         <div>${fieldLabel('Alamat')}<textarea id="edit-customer-address" rows="2" style="${inputStyle}resize:none;">${c.address || ''}</textarea></div>
         <div style="display:flex;gap:10px;">
-          <div style="flex:1;">${fieldLabel('Kota')}<input type="text" id="edit-customer-city" value="${c.city || ''}" style="${inputStyle}"></div>
-          <div style="flex:1;">${fieldLabel('Provinsi')}<input type="text" id="edit-customer-province" value="${c.province || ''}" style="${inputStyle}"></div>
+          <div style="flex:1;">
+            ${fieldLabel('Provinsi')}
+            <select id="edit-customer-province" style="${inputStyle}background:#fff;" onchange="loadCityOptions('edit-customer-province','edit-customer-city')">
+              <option value="">Pilih provinsi</option>${provinceOptions}
+            </select>
+          </div>
+          <div style="flex:1;">
+            ${fieldLabel('Kota/Kab')}
+            <select id="edit-customer-city" style="${inputStyle}background:#fff;">
+              <option value="">Memuat...</option>
+            </select>
+          </div>
         </div>
         <div>${fieldLabel('No. Telepon')}<input type="tel" id="edit-customer-phone" value="${c.phone || ''}" style="${inputStyle}"></div>
         <label for="edit-customer-photo" id="edit-photo-drop-label" style="border:1.5px dashed #C9C9C9;border-radius:12px;padding:22px;text-align:center;cursor:pointer;color:#999999;font-size:13px;font-weight:600;display:block;">${c.photoUrl ? 'Foto tersimpan · ketuk untuk ganti' : 'Ketuk untuk ambil/pilih foto'}</label>
@@ -583,6 +620,8 @@ async function renderEditCustomerForm(customerId) {
         <button id="save-customer-btn" style="width:100%;padding:14px;border:none;border-radius:12px;background:linear-gradient(135deg,#057C43,#0a5c33);color:#fff;font-weight:700;font-size:14.5px;cursor:pointer;margin-top:6px;">Simpan Perubahan</button>
       </div>
     `;
+
+    if (currentProvinceId) await loadCityOptions('edit-customer-province', 'edit-customer-city', c.cityId);
 
     document.getElementById('edit-customer-photo').addEventListener('change', (e) => {
       const label = document.getElementById('edit-photo-drop-label');
@@ -598,8 +637,7 @@ async function submitEditCustomer(customerId) {
   const categoryId = document.getElementById('edit-customer-category').value;
   const name = document.getElementById('edit-customer-name').value.trim();
   const address = document.getElementById('edit-customer-address').value.trim();
-  const city = document.getElementById('edit-customer-city').value.trim();
-  const province = document.getElementById('edit-customer-province').value.trim();
+  const cityId = document.getElementById('edit-customer-city').value;
   const phone = document.getElementById('edit-customer-phone').value.trim();
   const photoFile = document.getElementById('edit-customer-photo').files[0];
   const errorBox = document.getElementById('edit-customer-error');
@@ -609,8 +647,7 @@ async function submitEditCustomer(customerId) {
   formData.append('categoryId', categoryId);
   formData.append('name', name);
   formData.append('address', address);
-  formData.append('city', city);
-  formData.append('province', province);
+  formData.append('cityId', cityId);
   formData.append('phone', phone);
   if (photoFile) formData.append('photo', photoFile);
 
