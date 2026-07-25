@@ -1,8 +1,18 @@
+// ====== Escape HTML (K2) ======
+// Wajib dipakai untuk SEMUA teks yang berasal dari database/pengguna (nama customer,
+// alamat, telepon, nama produk, dst) sebelum ditempel ke innerHTML. Tanpa ini, siapa pun
+// yang bisa mengetik nama customer bisa menjalankan kode di browser Direktur/Admin.
+function esc(v) {
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 async function compressImage(file, maxDim = 1280, quality = 0.75) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     const reader = new FileReader();
     reader.onload = (e) => { img.src = e.target.result; };
+    reader.onerror = () => reject(new Error('Gagal membaca file foto. Coba pilih ulang.'));
     img.onload = () => {
       let { width, height } = img;
       if (width > height && width > maxDim) { height = Math.round(height * (maxDim / width)); width = maxDim; }
@@ -22,9 +32,19 @@ const IS_NATIVE_APP = typeof window.Capacitor !== 'undefined' && window.Capacito
 const API = IS_NATIVE_APP ? 'https://canv.smart-outsource.my.id/api' : '/api';
 
 // ====== State ======
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem('sc_user') || 'null');
+  } catch (e) {
+    // Data tersimpan rusak -> bersihkan supaya aplikasi tidak layar putih selamanya
+    localStorage.removeItem('sc_user');
+    return null;
+  }
+}
+
 const state = {
   token: localStorage.getItem('sc_token') || null,
-  user: JSON.parse(localStorage.getItem('sc_user') || 'null'),
+  user: readStoredUser(),
   customers: [],
   categories: [],
   products: [],
@@ -40,6 +60,18 @@ async function api(path, options = {}) {
 
   const res = await fetch(API + path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401 && state.token) {
+    // Sesi login tidak valid/kedaluwarsa -> keluar otomatis, jangan biarkan
+    // pengguna terjebak di layar error tanpa jalan keluar.
+    localStorage.removeItem('sc_token');
+    localStorage.removeItem('sc_user');
+    state.token = null;
+    state.user = null;
+    navigate('#/home');
+    render();
+    throw new Error('Sesi login sudah berakhir. Silakan login ulang.');
+  }
 
   if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
   return data;
@@ -218,11 +250,11 @@ async function renderHome() {
         <div onclick="navigate('#/customer/${c.id}')" style="display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:11px 13px;cursor:pointer;margin-bottom:9px;">
           <div style="width:38px;height:38px;border-radius:50%;background:${avatarColor};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;">${initials}</div>
           <div style="flex:1;min-width:0;">
-            <div style="font-size:14px;font-weight:700;color:#1a1a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.name}</div>
-            <div style="font-size:12px;color:#888888;">${c.city?.name || '-'}</div>
+            <div style="font-size:14px;font-weight:700;color:#1a1a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.name)}</div>
+            <div style="font-size:12px;color:#888888;">${esc(c.city?.name || '-')}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
-            <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${gc.bg};color:${gc.color};">${catName}</span>
+            <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${gc.bg};color:${gc.color};">${esc(catName)}</span>
             <span style="font-size:10.5px;font-weight:700;color:${visited ? '#057C43' : '#B0AFA9'};">${visited ? 'Dikunjungi' : 'Belum'}</span>
           </div>
         </div>`;
@@ -231,7 +263,7 @@ async function renderHome() {
     const broadcastHtml = messages && messages[0] ? `
       <div style="display:flex;align-items:center;gap:12px;background:linear-gradient(120deg,#FFF6DF,#FCE9C4);border:1px solid #F0D9A6;border-radius:14px;padding:13px 16px;margin-bottom:16px;">
         <div style="width:6px;align-self:stretch;border-radius:3px;background:linear-gradient(180deg,#B57837,#FFE370);"></div>
-        <div style="font-size:12.5px;color:#5c4a24;line-height:1.5;"><b>${messages[0].fromName}:</b> ${messages[0].text}</div>
+        <div style="font-size:12.5px;color:#5c4a24;line-height:1.5;"><b>${esc(messages[0].fromName)}:</b> ${esc(messages[0].text)}</div>
       </div>` : '';
 
     app.innerHTML = `
@@ -239,7 +271,7 @@ async function renderHome() {
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;">
           <div>
             <div style="font-size:13px;color:#777777;">Selamat datang,</div>
-            <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:20px;color:#1a1a1a;">${state.user?.name || ''}</div>
+            <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:20px;color:#1a1a1a;">${esc(state.user?.name || '')}</div>
           </div>
           <div style="font-size:12px;color:#999999;text-align:right;margin-top:4px;">${new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}</div>
         </div>
@@ -278,7 +310,7 @@ async function showAiRecommendation() {
   box.innerHTML = `<div class="card"><p style="margin:0;font-size:13px;color:#8e8e93;">Menganalisa...</p></div>`;
   try {
     const data = await api('/ai/sales-recommendation', { method: 'POST' });
-    box.innerHTML = `<div class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${data.recommendation}</div>`;
+    box.innerHTML = `<div class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${esc(data.recommendation)}</div>`;
   } catch (err) {
     box.innerHTML = `<div class="error-box">${err.message}</div>`;
   }
@@ -296,7 +328,7 @@ async function renderReceipt(orderId) {
 
     const itemRows = o.items.map(it => `
       <div style="margin-bottom:5px;">
-        <div>${it.product.name}</div>
+        <div>${esc(it.product.name)}</div>
         <div style="display:flex;justify-content:space-between;color:#555;">
           <span>${it.quantity} x ${formatRupiah(it.price)}</span><span>${formatRupiah(it.price * it.quantity)}</span>
         </div>
@@ -319,12 +351,12 @@ async function renderReceipt(orderId) {
           <div style="text-align:center;font-weight:700;font-size:12px;margin-bottom:6px;">BUKTI PESANAN</div>
           <div>No. Order : ${orderNumber}</div>
           <div>Tanggal&nbsp;&nbsp;: ${tanggal}</div>
-          <div>Sales&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${o.sales.name}</div>
+          <div>Sales&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${esc(o.sales.name)}</div>
           <div style="border-top:1px dashed #999;margin:8px 0;"></div>
           <div style="font-weight:700;">Customer:</div>
-          <div>${o.customer.name}</div>
-          <div style="color:#555;">${o.customer.address}</div>
-          <div style="color:#555;">${o.customer.city.name}, ${o.customer.city.province.name}</div>
+          <div>${esc(o.customer.name)}</div>
+          <div style="color:#555;">${esc(o.customer.address)}</div>
+          <div style="color:#555;">${esc(o.customer.city.name)}, ${esc(o.customer.city.province.name)}</div>
           <div style="border-top:1px dashed #999;margin:8px 0;"></div>
           <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:4px;"><span>Item</span><span>Subtotal</span></div>
           ${itemRows}
@@ -351,7 +383,7 @@ function navHeaderHtml(title, backHash) {
   return `
     <div style="flex-shrink:0;display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #ECECEC;background:#fff;">
       <button onclick="navigate('${backHash}')" style="border:none;background:none;font-size:18px;color:#303030;cursor:pointer;">←</button>
-      <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:16px;color:#1a1a1a;">${title}</div>
+      <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:16px;color:#1a1a1a;">${esc(title)}</div>
     </div>`;
 }
 
@@ -373,16 +405,16 @@ async function renderCustomerDetail(customerId) {
       <div style="flex:1;overflow-y:auto;padding:20px;">
         <div style="display:flex;flex-direction:column;align-items:center;text-align:center;margin-bottom:18px;">
           ${c.photoUrl ? `<img src="${API}${c.photoUrl}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;margin-bottom:10px;">` : `<div style="width:72px;height:72px;border-radius:50%;background:#057C43;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:24px;margin-bottom:10px;">${initials}</div>`}
-          <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:18px;color:#1a1a1a;">${c.name}</div>
+          <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:18px;color:#1a1a1a;">${esc(c.name)}</div>
           <div style="display:flex;gap:6px;margin-top:8px;">
-            <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:oklch(93% 0.05 145 / 0.6);color:#057C43;">${c.category?.name || '-'}</span>
+            <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:oklch(93% 0.05 145 / 0.6);color:#057C43;">${esc(c.category?.name || '-')}</span>
             <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${c.verified ? 'oklch(93% 0.05 145 / 0.6)' : '#FBEBD5'};color:${c.verified ? '#057C43' : '#8a5c26'};">${c.verified ? 'Aktif' : 'Menunggu Approval'}</span>
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:1px;background:#ECECEC;border-radius:12px;overflow:hidden;margin-bottom:18px;">
-          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Alamat</div><div style="font-size:13.5px;color:#303030;">${c.address}, ${c.city?.name || '-'}, ${c.city?.province?.name || '-'}</div></div>
-          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">No. Telepon</div><div style="font-size:13.5px;color:#303030;">${c.phone}</div></div>
-          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Sales Bertanggung Jawab</div><div style="font-size:13.5px;color:#303030;">${c.sales?.name || '-'}</div></div>
+          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Alamat</div><div style="font-size:13.5px;color:#303030;">${esc(c.address)}, ${esc(c.city?.name || '-')}, ${esc(c.city?.province?.name || '-')}</div></div>
+          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">No. Telepon</div><div style="font-size:13.5px;color:#303030;">${esc(c.phone)}</div></div>
+          <div style="background:#fff;padding:13px 15px;"><div style="font-size:11px;color:#999999;margin-bottom:3px;">Sales Bertanggung Jawab</div><div style="font-size:13.5px;color:#303030;">${esc(c.sales?.name || '-')}</div></div>
         </div>
         <div style="display:flex;gap:10px;margin-bottom:20px;">
           <button onclick="navigate('#/checkin/${c.id}')" style="flex:1;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Check-in</button>
@@ -411,21 +443,22 @@ async function loadCityOptions(provinceSelectId, citySelectId, selectedCityId) {
   citySelect.innerHTML = '<option value="">Memuat...</option>';
   try {
     const cities = await api('/regions/cities?provinceId=' + provinceId);
-    citySelect.innerHTML = '<option value="">Pilih kota</option>' + cities.map(c => `<option value="${c.id}" ${c.id === selectedCityId ? 'selected' : ''}>${c.name}</option>`).join('');
+    citySelect.innerHTML = '<option value="">Pilih kota</option>' + cities.map(c => `<option value="${c.id}" ${c.id === selectedCityId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   } catch (err) {
     citySelect.innerHTML = '<option value="">Gagal memuat kota</option>';
   }
 }
 
 async function renderAddCustomerForm() {
+  isSubmittingNewCustomer = false;
   app.innerHTML = `<div class="topbar-nav"><button class="back-btn" onclick="navigate('#/home')">‹</button><p class="title">Memuat...</p></div>`;
 
   try {
     const [categories, provinces] = await Promise.all([api('/customer-categories'), api('/regions/provinces')]);
     state.categories = categories;
 
-    const categoryOptions = categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
-    const provinceOptions = provinces.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    const categoryOptions = categories.map(cat => `<option value="${cat.id}">${esc(cat.name)}</option>`).join('');
+    const provinceOptions = provinces.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
     const fieldLabel = (text) => `<div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#777777;margin-bottom:6px;">${text}</div>`;
     const inputStyle = `width:100%;box-sizing:border-box;padding:12px 13px;border-radius:11px;border:1.5px solid #E4E4E4;font-family:'Manrope',sans-serif;font-size:14.5px;color:#303030;`;
 
@@ -550,7 +583,7 @@ function renderCandidateList(candidates) {
   const rows = candidates.map(c => `
     <div style="display:flex;align-items:center;gap:10px;background:#fff;border-radius:9px;padding:8px 10px;margin-bottom:8px;">
       ${c.photoUrl ? `<img src="${API}${c.photoUrl}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div style="width:30px;height:30px;border-radius:50%;background:#8a5c26;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${c.name.slice(0,2).toUpperCase()}</div>`}
-      <div style="flex:1;"><div style="font-size:12.5px;font-weight:700;color:#1a1a1a;">${c.name}</div><div style="font-size:11px;color:#999999;">± ${c.distanceMeters}m dari lokasi ini</div></div>
+      <div style="flex:1;"><div style="font-size:12.5px;font-weight:700;color:#1a1a1a;">${esc(c.name)}</div><div style="font-size:11px;color:#999999;">± ${c.distanceMeters}m dari lokasi ini</div></div>
       <button onclick="navigate('#/edit-customer/${c.id}')" style="width:auto;border:none;background:#8a5c26;color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Ini sama</button>
     </div>`).join('');
 
@@ -558,12 +591,17 @@ function renderCandidateList(candidates) {
     <div style="background:#FFF6DF;border:1px solid #F0D9A6;border-radius:11px;padding:11px 13px;">
       <div style="font-size:12px;font-weight:700;color:#8a5c24;margin-bottom:8px;">Kandidat duplikat terdeteksi</div>
       ${rows}
-      <button onclick="submitNewCustomer()" style="width:100%;margin-top:4px;border:1.5px solid #8a5c26;background:#fff;color:#8a5c26;border-radius:8px;padding:9px;font-size:12.5px;font-weight:700;cursor:pointer;">Bukan, ini customer berbeda — lanjut tambah</button>
+      <button id="confirm-different-customer-btn" onclick="submitNewCustomer()" style="width:100%;margin-top:4px;border:1.5px solid #8a5c26;background:#fff;color:#8a5c26;border-radius:8px;padding:9px;font-size:12.5px;font-weight:700;cursor:pointer;">Bukan, ini customer berbeda — lanjut tambah</button>
     </div>
   `;
 }
 
+let isSubmittingNewCustomer = false;
+
 async function submitNewCustomer() {
+  if (isSubmittingNewCustomer) return; // cegah customer kembar akibat klik ganda
+  isSubmittingNewCustomer = true;
+
   const categoryId = document.getElementById('new-customer-category').value;
   const name = document.getElementById('new-customer-name').value.trim();
   const address = document.getElementById('new-customer-address').value.trim();
@@ -573,18 +611,21 @@ async function submitNewCustomer() {
   const errorBox = document.getElementById('add-customer-error');
   errorBox.innerHTML = '';
 
-  const formData = new FormData();
-  formData.append('categoryId', categoryId);
-  formData.append('name', name);
-  formData.append('address', address);
-  formData.append('cityId', cityId);
-  formData.append('phone', phone);
-  formData.append('latitude', addCustomerLocation.latitude);
-  formData.append('longitude', addCustomerLocation.longitude);
-  const compressedPhoto = await compressImage(photoFile);
-  formData.append('photo', compressedPhoto, 'photo.jpg');
+  const submitBtn = document.getElementById('confirm-different-customer-btn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Menyimpan...'; }
 
   try {
+    const formData = new FormData();
+    formData.append('categoryId', categoryId);
+    formData.append('name', name);
+    formData.append('address', address);
+    formData.append('cityId', cityId);
+    formData.append('phone', phone);
+    formData.append('latitude', addCustomerLocation.latitude);
+    formData.append('longitude', addCustomerLocation.longitude);
+    const compressedPhoto = await compressImage(photoFile);
+    formData.append('photo', compressedPhoto, 'photo.jpg');
+
     const headers = {};
     if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
     if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
@@ -594,7 +635,9 @@ async function submitNewCustomer() {
 
     navigate('#/home');
   } catch (err) {
-    errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
+    errorBox.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Bukan, ini customer berbeda — lanjut tambah'; }
+    isSubmittingNewCustomer = false;
   }
 }
 
@@ -606,10 +649,10 @@ async function renderEditCustomerForm(customerId) {
     const [c, categories, provinces] = await Promise.all([api('/customers/' + customerId), api('/customer-categories'), api('/regions/provinces')]);
 
     const categoryOptions = categories.map(cat =>
-      `<option value="${cat.id}" ${cat.id === c.categoryId ? 'selected' : ''}>${cat.name}</option>`
+      `<option value="${cat.id}" ${cat.id === c.categoryId ? 'selected' : ''}>${esc(cat.name)}</option>`
     ).join('');
     const currentProvinceId = c.city?.provinceId || c.city?.province?.id || '';
-    const provinceOptions = provinces.map(p => `<option value="${p.id}" ${p.id === currentProvinceId ? 'selected' : ''}>${p.name}</option>`).join('');
+    const provinceOptions = provinces.map(p => `<option value="${p.id}" ${p.id === currentProvinceId ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
     const fieldLabel = (text) => `<div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#777777;margin-bottom:6px;">${text}</div>`;
     const inputStyle = `width:100%;box-sizing:border-box;padding:12px 13px;border-radius:11px;border:1.5px solid #E4E4E4;font-family:'Manrope',sans-serif;font-size:14.5px;color:#303030;`;
 
@@ -617,8 +660,8 @@ async function renderEditCustomerForm(customerId) {
       ${navHeaderHtml('Edit Customer', '#/customer/' + customerId)}
       <div style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:13px;">
         <div>${fieldLabel('Golongan')}<select id="edit-customer-category" style="${inputStyle}background:#fff;">${categoryOptions}</select></div>
-        <div>${fieldLabel('Nama Customer')}<input type="text" id="edit-customer-name" value="${c.name}" style="${inputStyle}"></div>
-        <div>${fieldLabel('Alamat')}<textarea id="edit-customer-address" rows="2" style="${inputStyle}resize:none;">${c.address || ''}</textarea></div>
+        <div>${fieldLabel('Nama Customer')}<input type="text" id="edit-customer-name" value="${esc(c.name)}" style="${inputStyle}"></div>
+        <div>${fieldLabel('Alamat')}<textarea id="edit-customer-address" rows="2" style="${inputStyle}resize:none;">${esc(c.address || '')}</textarea></div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;">
             ${fieldLabel('Provinsi')}
@@ -633,7 +676,7 @@ async function renderEditCustomerForm(customerId) {
             </select>
           </div>
         </div>
-        <div>${fieldLabel('No. Telepon')}<input type="tel" id="edit-customer-phone" value="${c.phone || ''}" style="${inputStyle}"></div>
+        <div>${fieldLabel('No. Telepon')}<input type="tel" id="edit-customer-phone" value="${esc(c.phone || '')}" style="${inputStyle}"></div>
         <label for="edit-customer-photo" id="edit-photo-drop-label" style="border:1.5px dashed #C9C9C9;border-radius:12px;padding:22px;text-align:center;cursor:pointer;color:#999999;font-size:13px;font-weight:600;display:block;">${c.photoUrl ? 'Foto tersimpan · ketuk untuk ganti' : 'Ketuk untuk ambil/pilih foto'}</label>
         <input type="file" id="edit-customer-photo" accept="image/*" capture="environment" style="display:none;">
         <div id="edit-customer-error"></div>
@@ -669,16 +712,17 @@ async function submitEditCustomer(customerId) {
   formData.append('address', address);
   formData.append('cityId', cityId);
   formData.append('phone', phone);
-  if (photoFile) {
-    const compressedPhoto = await compressImage(photoFile);
-    formData.append('photo', compressedPhoto, 'photo.jpg');
-  }
 
   const btn = document.getElementById('save-customer-btn');
   btn.disabled = true;
   btn.textContent = 'Menyimpan...';
 
   try {
+    if (photoFile) {
+      const compressedPhoto = await compressImage(photoFile);
+      formData.append('photo', compressedPhoto, 'photo.jpg');
+    }
+
     const headers = {};
     if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
     if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
@@ -688,7 +732,7 @@ async function submitEditCustomer(customerId) {
 
     navigate('#/customer/' + customerId);
   } catch (err) {
-    errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
+    errorBox.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
     btn.disabled = false;
     btn.textContent = 'Simpan perubahan';
   }
@@ -704,7 +748,7 @@ function renderCheckinForm(customerId) {
         <div id="checkin-pulse" style="width:52px;height:52px;border-radius:50%;background:#057C43;animation:damarPulse 2s infinite;"></div>
       </div>
       <div style="text-align:center;">
-        <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:17px;color:#1a1a1a;margin-bottom:6px;">${customer ? customer.name : 'Customer'}</div>
+        <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:17px;color:#1a1a1a;margin-bottom:6px;">${esc(customer ? customer.name : 'Customer')}</div>
         <div id="checkin-accuracy" style="font-size:13px;color:#777777;">Mengambil lokasi GPS Anda...</div>
       </div>
       <div id="checkin-status"></div>
@@ -766,8 +810,8 @@ async function renderOrderForm(customerId, visitId) {
       return `
       <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:11px 13px;margin-bottom:9px;">
         <div>
-          <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${p.name}</div>
-          <div id="unit-price-${p.id}" style="font-size:12px;color:#888888;">${formatRupiah(p.price)} / ${p.unit}</div>
+          <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${esc(p.name)}</div>
+          <div id="unit-price-${p.id}" style="font-size:12px;color:#888888;">${formatRupiah(p.price)} / ${esc(p.unit)}</div>
           ${tierInfo}
         </div>
         <div style="display:flex;align-items:center;gap:9px;">
@@ -824,7 +868,7 @@ function stepQty(productId, delta) {
   const product = state.products.find(p => p.id === productId);
   if (product) {
     const price = resolveTierPrice(product, Math.max(newQty, 1));
-    document.getElementById('unit-price-' + productId).innerHTML = `${formatRupiah(price)} / ${product.unit}` + (price < product.price ? ' <span style="color:#057C43;font-weight:700;">(harga grosir)</span>' : '');
+    document.getElementById('unit-price-' + productId).innerHTML = `${formatRupiah(price)} / ${esc(product.unit)}` + (price < product.price ? ' <span style="color:#057C43;font-weight:700;">(harga grosir)</span>' : '');
   }
   recalcOrderTotal();
 }
@@ -893,7 +937,7 @@ async function renderHistory() {
     const rows = visits.map(v => `
       <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:12px 14px;margin-bottom:8px;">
         <div>
-          <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${v.customer.name}</div>
+          <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${esc(v.customer.name)}</div>
           <div style="font-size:12px;color:#888888;margin-top:2px;">${new Date(v.checkinAt).toLocaleDateString('id-ID')}</div>
         </div>
         <div style="font-size:13px;font-weight:700;color:#057C43;">${formatJam(v.checkinAt)}</div>
@@ -965,7 +1009,7 @@ async function renderProfile() {
     <div style="flex:1;overflow-y:auto;padding:22px 20px 16px;">
       <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:14px;margin-bottom:26px;">
         ${photoHtml}
-        <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:19px;color:#1a1a1a;">${state.user?.name || '-'}</div>
+        <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:19px;color:#1a1a1a;">${esc(state.user?.name || '-')}</div>
         <div style="font-size:13px;color:#888888;margin-top:2px;">${state.user?.email || '-'}</div>
         <span style="margin-top:10px;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;background:oklch(93% 0.05 145 / 0.5);color:#057C43;">${roleLabel}</span>
       </div>
