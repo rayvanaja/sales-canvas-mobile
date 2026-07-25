@@ -1,3 +1,22 @@
+async function compressImage(file, maxDim = 1280, quality = 0.75) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (e) => { img.src = e.target.result; };
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > height && width > maxDim) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+      else if (height > maxDim) { width = Math.round(width * (maxDim / height)); height = maxDim; }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', quality);
+    };
+    img.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
 // ====== Konfigurasi ======
 const IS_NATIVE_APP = typeof window.Capacitor !== 'undefined' && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
 const API = IS_NATIVE_APP ? 'https://canv.smart-outsource.my.id/api' : '/api';
@@ -562,7 +581,8 @@ async function submitNewCustomer() {
   formData.append('phone', phone);
   formData.append('latitude', addCustomerLocation.latitude);
   formData.append('longitude', addCustomerLocation.longitude);
-  formData.append('photo', photoFile);
+  const compressedPhoto = await compressImage(photoFile);
+  formData.append('photo', compressedPhoto, 'photo.jpg');
 
   try {
     const headers = {};
@@ -649,7 +669,10 @@ async function submitEditCustomer(customerId) {
   formData.append('address', address);
   formData.append('cityId', cityId);
   formData.append('phone', phone);
-  if (photoFile) formData.append('photo', photoFile);
+  if (photoFile) {
+    const compressedPhoto = await compressImage(photoFile);
+    formData.append('photo', compressedPhoto, 'photo.jpg');
+  }
 
   const btn = document.getElementById('save-customer-btn');
   btn.disabled = true;
@@ -736,15 +759,24 @@ async function renderOrderForm(customerId, visitId) {
     const products = await api('/products');
     state.products = products;
 
-    const rows = products.map(p => `
+    const rows = products.map(p => {
+      const tierInfo = (p.priceTiers && p.priceTiers.length > 0)
+        ? `<div style="font-size:10.5px;color:#B57837;margin-top:2px;">Grosir: ${p.priceTiers.map(t => `≥${t.minQty}=${formatRupiah(t.price)}`).join(', ')}</div>`
+        : '';
+      return `
       <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:11px 13px;margin-bottom:9px;">
-        <div><div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${p.name}</div><div style="font-size:12px;color:#888888;">${formatRupiah(p.price)} / ${p.unit}</div></div>
+        <div>
+          <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${p.name}</div>
+          <div id="unit-price-${p.id}" style="font-size:12px;color:#888888;">${formatRupiah(p.price)} / ${p.unit}</div>
+          ${tierInfo}
+        </div>
         <div style="display:flex;align-items:center;gap:9px;">
           <button type="button" onclick="stepQty('${p.id}',-1)" style="width:26px;height:26px;border-radius:50%;border:1px solid #D8D8D8;background:#fff;font-weight:700;cursor:pointer;">-</button>
-          <div id="qty-${p.id}" data-product-id="${p.id}" data-price="${p.price}" class="qty-value" style="width:20px;text-align:center;font-weight:700;font-size:14px;">0</div>
+          <div id="qty-${p.id}" data-product-id="${p.id}" class="qty-value" style="width:20px;text-align:center;font-weight:700;font-size:14px;">0</div>
           <button type="button" onclick="stepQty('${p.id}',1)" style="width:26px;height:26px;border-radius:50%;border:none;background:#057C43;color:#fff;font-weight:700;cursor:pointer;">+</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     const payBtn = (val, label) => `<button type="button" data-pay="${val}" onclick="setPayMethod('${val}')" class="pay-method-btn" style="flex:1;padding:11px;border-radius:10px;font-size:12.5px;font-weight:700;cursor:pointer;border:1.5px solid #E4E4E4;background:#fff;color:#555;">${label}</button>`;
 
@@ -776,17 +808,33 @@ async function renderOrderForm(customerId, visitId) {
   }
 }
 
+function resolveTierPrice(product, qty) {
+  if (!product.priceTiers) return product.price;
+  const sorted = [...product.priceTiers].sort((a, b) => b.minQty - a.minQty);
+  const applicable = sorted.find(t => t.minQty <= qty);
+  return applicable ? applicable.price : product.price;
+}
+
 function stepQty(productId, delta) {
   const el = document.getElementById('qty-' + productId);
   const current = parseInt(el.textContent, 10) || 0;
-  el.textContent = Math.max(0, current + delta);
+  const newQty = Math.max(0, current + delta);
+  el.textContent = newQty;
+
+  const product = state.products.find(p => p.id === productId);
+  if (product) {
+    const price = resolveTierPrice(product, Math.max(newQty, 1));
+    document.getElementById('unit-price-' + productId).innerHTML = `${formatRupiah(price)} / ${product.unit}` + (price < product.price ? ' <span style="color:#057C43;font-weight:700;">(harga grosir)</span>' : '');
+  }
   recalcOrderTotal();
 }
 
 function recalcOrderTotal() {
   let total = 0;
   document.querySelectorAll('.qty-value').forEach(el => {
-    total += (parseInt(el.textContent, 10) || 0) * parseFloat(el.dataset.price);
+    const qty = parseInt(el.textContent, 10) || 0;
+    const product = state.products.find(p => p.id === el.dataset.productId);
+    if (product && qty > 0) total += resolveTierPrice(product, qty) * qty;
   });
   document.getElementById('order-total').textContent = formatRupiah(total);
 }
@@ -909,17 +957,89 @@ async function renderProfile() {
     }
   }
 
+  const photoHtml = state.user?.photoUrl
+    ? `<img src="${API}${state.user.photoUrl}" style="width:76px;height:76px;border-radius:50%;object-fit:cover;margin-bottom:12px;">`
+    : `<div style="width:76px;height:76px;border-radius:50%;background:linear-gradient(135deg,#057C43,#7AB41D);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:26px;margin-bottom:12px;">${initials}</div>`;
+
   app.innerHTML = `
     <div style="flex:1;overflow-y:auto;padding:22px 20px 16px;">
       <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:14px;margin-bottom:26px;">
-        <div style="width:76px;height:76px;border-radius:50%;background:linear-gradient(135deg,#057C43,#7AB41D);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:26px;margin-bottom:12px;">${initials}</div>
+        ${photoHtml}
         <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:19px;color:#1a1a1a;">${state.user?.name || '-'}</div>
         <div style="font-size:13px;color:#888888;margin-top:2px;">${state.user?.email || '-'}</div>
         <span style="margin-top:10px;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;background:oklch(93% 0.05 145 / 0.5);color:#057C43;">${roleLabel}</span>
       </div>
       ${targetHtml}
-      <button onclick="logout()" style="width:100%;padding:13px;border:1.5px solid #E28686;border-radius:11px;background:#fff;color:#B3261E;font-weight:700;font-size:14px;cursor:pointer;">Keluar</button>
+
+      <div style="background:#fff;border-radius:14px;overflow:hidden;border:1px solid #ECECEC;">
+        <label for="profile-photo-input" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#303030;border-bottom:1px solid #F1F1EE;cursor:pointer;">📷 <span>Ubah Foto Profil</span></label>
+        <input type="file" id="profile-photo-input" accept="image/*" capture="environment" style="display:none;" onchange="submitProfilePhoto(this)">
+        <div onclick="showChangePasswordForm()" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#303030;border-bottom:1px solid #F1F1EE;cursor:pointer;">🔒 <span>Ganti Password</span></div>
+        <div onclick="confirmLogout()" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#B3261E;cursor:pointer;">⏻ <span>Keluar</span></div>
+      </div>
+      <div id="change-password-box" style="margin-top:10px;"></div>
     </div>
     ${tabBarHtml('profile')}
+    <div id="logout-modal-box"></div>
   `;
+}
+
+function confirmLogout() {
+  const box = document.getElementById('logout-modal-box');
+  box.innerHTML = `
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;z-index:100;" onclick="if(event.target===this) this.parentElement.innerHTML=''">
+      <div style="background:#fff;border-radius:14px;padding:22px;width:280px;text-align:center;">
+        <div style="font-size:14px;font-weight:700;color:#303030;margin-bottom:8px;">Yakin ingin keluar?</div>
+        <div style="font-size:12px;color:#888;margin-bottom:16px;">Anda perlu login ulang untuk masuk lagi.</div>
+        <div style="display:flex;gap:8px;">
+          <button style="flex:1;border:none;background:#B3261E;color:#fff;padding:10px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;" onclick="logout()">Ya, Keluar</button>
+          <button style="flex:1;border:1.5px solid #D8D8D8;background:#fff;color:#303030;padding:10px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;" onclick="document.getElementById('logout-modal-box').innerHTML=''">Batal</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitProfilePhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const compressed = await compressImage(file);
+    const formData = new FormData();
+    formData.append('photo', compressed, 'photo.jpg');
+    const headers = {};
+    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    const res = await fetch(API + '/users/me/photo', { method: 'POST', headers, body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Gagal upload foto.');
+    state.user = data.user;
+    localStorage.setItem('sc_user', JSON.stringify(data.user));
+    alert('Foto profil berhasil disimpan.');
+    renderProfile();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function showChangePasswordForm() {
+  const box = document.getElementById('change-password-box');
+  box.innerHTML = `
+    <div style="background:#fff;border:1px solid #ECECEC;border-radius:14px;padding:16px;margin-bottom:10px;">
+      <input type="password" id="cp-current" placeholder="Password saat ini" style="width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1.5px solid #E4E4E4;margin-bottom:8px;font-size:14px;">
+      <input type="password" id="cp-new" placeholder="Password baru (min. 6 karakter)" style="width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1.5px solid #E4E4E4;margin-bottom:10px;font-size:14px;">
+      <div id="cp-error"></div>
+      <button onclick="submitChangePassword()" style="width:100%;padding:12px;border:none;border-radius:10px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan Password</button>
+    </div>`;
+}
+
+async function submitChangePassword() {
+  const currentPassword = document.getElementById('cp-current').value;
+  const newPassword = document.getElementById('cp-new').value;
+  const errorBox = document.getElementById('cp-error');
+  errorBox.innerHTML = '';
+  try {
+    await api('/users/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+    document.getElementById('change-password-box').innerHTML = `<div style="background:oklch(93% 0.05 145 / 0.5);color:#057C43;border-radius:10px;padding:10px 12px;font-size:12.5px;font-weight:700;margin-bottom:10px;">Password berhasil diubah.</div>`;
+  } catch (err) {
+    errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
+  }
 }
