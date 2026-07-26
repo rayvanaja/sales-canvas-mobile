@@ -317,6 +317,33 @@ async function showAiRecommendation() {
 }
 
 // ====== STRUK / BUKTI PESANAN ======
+async function openReceiptPdf(orderId) {
+  const btn = document.getElementById('print-receipt-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan PDF...'; }
+  try {
+    const headers = {};
+    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
+    const res = await fetch(API + '/orders/' + orderId + '/receipt-pdf', { headers });
+    if (!res.ok) throw new Error('Gagal membuat struk PDF.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    if (IS_NATIVE_APP) {
+      // Di APK, buka di tab/viewer baru supaya bisa dibagikan lewat WA dsb.
+      window.open(url, '_blank');
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'struk-' + orderId.slice(-6) + '.pdf';
+      a.click();
+    }
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Cetak / Simpan Struk (PDF)'; }
+  }
+}
+
 async function renderReceipt(orderId) {
   app.innerHTML = `<div style="padding:22px 20px;"><p style="color:var(--text-muted);font-size:14px;">Memuat struk...</p></div>`;
 
@@ -368,7 +395,7 @@ async function renderReceipt(orderId) {
         </div>
 
         <div class="receipt-noprint" style="width:280px;margin-top:16px;display:flex;flex-direction:column;gap:10px;">
-          <button onclick="window.print()" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Cetak Struk</button>
+          <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Cetak / Simpan Struk (PDF)</button>
           <button onclick="navigate('#/home')" style="width:100%;padding:13px;border:1.5px solid #D8D8D8;border-radius:11px;background:#fff;color:#303030;font-weight:700;font-size:13.5px;cursor:pointer;">Kembali ke Home</button>
         </div>
       </div>
