@@ -841,6 +841,7 @@ async function renderOrderForm(customerId, visitId) {
 
         <div id="order-error"></div>
         <button id="submit-order-btn" style="width:100%;padding:15px;border:none;border-radius:12px;background:linear-gradient(135deg,#057C43,#0a5c33);color:#fff;font-weight:700;font-size:14.5px;cursor:pointer;">Kirim Pesanan</button>
+        ${visitId && visitId !== 'none' ? `<button id="finish-no-order-btn" type="button" onclick="finishVisitWithoutOrder('${customerId}','${visitId}')" style="width:100%;margin-top:10px;padding:13px;border:1.5px solid #D8D8D8;border-radius:12px;background:#fff;color:#555;font-weight:700;font-size:13px;cursor:pointer;">Kunjungan tanpa order — selesai</button>` : ''}
       </div>
     `;
 
@@ -925,6 +926,24 @@ async function submitOrder(customerId, visitId) {
     errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
     btn.disabled = false;
     btn.textContent = 'Kirim Pesanan';
+  }
+}
+
+async function finishVisitWithoutOrder(customerId, visitId) {
+  if (!confirm('Tandai kunjungan ini selesai tanpa order?')) return;
+
+  const btn = document.getElementById('finish-no-order-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
+
+  try {
+    await api(`/visits/${visitId}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify({ notes: null }),
+    });
+    navigate('#/home');
+  } catch (err) {
+    alert(err.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Kunjungan tanpa order — selesai'; }
   }
 }
 
