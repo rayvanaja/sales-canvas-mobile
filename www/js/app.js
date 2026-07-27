@@ -87,6 +87,20 @@ function formatJam(dateStr) {
 }
 
 // Ambil lokasi GPS - otomatis pakai plugin Capacitor (APK) atau browser API (web)
+// Deteksi root Tingkat 1 - lihat catatan lengkap di RootCheckPlugin.java.
+// Hanya menambah skor risiko di server, tidak pernah dipakai memblokir di sini.
+async function checkPossibleRoot() {
+  try {
+    if (IS_NATIVE_APP && window.Capacitor?.Plugins?.RootCheck) {
+      const result = await window.Capacitor.Plugins.RootCheck.check();
+      return result?.possibleRoot === true;
+    }
+  } catch (e) {
+    // Plugin tidak tersedia (browser web, atau APK versi lama) - abaikan saja.
+  }
+  return false;
+}
+
 async function getCurrentLocation(onSuccess, onError) {
   if (IS_NATIVE_APP && window.Capacitor.Plugins.Geolocation) {
     try {
@@ -543,8 +557,8 @@ async function renderAddCustomerForm() {
     });
 
     getCurrentLocation(
-      (latitude, longitude) => {
-        addCustomerLocation = { latitude, longitude };
+      (latitude, longitude, accuracy) => {
+        addCustomerLocation = { latitude, longitude, accuracy };
         document.getElementById('gps-status').innerHTML = 'Lokasi terkunci';
         const btn = document.getElementById('check-customer-btn');
         btn.disabled = false;
@@ -650,6 +664,8 @@ async function submitNewCustomer() {
     formData.append('phone', phone);
     formData.append('latitude', addCustomerLocation.latitude);
     formData.append('longitude', addCustomerLocation.longitude);
+    if (addCustomerLocation.accuracy !== undefined) formData.append('accuracy', addCustomerLocation.accuracy);
+    formData.append('possibleRoot', await checkPossibleRoot());
     const compressedPhoto = await compressImage(photoFile);
     formData.append('photo', compressedPhoto, 'photo.jpg');
 
@@ -791,7 +807,7 @@ function renderCheckinForm(customerId) {
       btn.disabled = false;
       btn.style.opacity = '1';
       btn.textContent = 'Konfirmasi Check-in';
-      btn.onclick = () => doCheckin(customerId, latitude, longitude);
+      btn.onclick = () => doCheckin(customerId, latitude, longitude, accuracy);
     },
     (errMessage) => {
       document.getElementById('checkin-status').innerHTML = `<div class="error-box">Gagal mengambil lokasi: ${errMessage}. Pastikan izin lokasi diaktifkan.</div>`;
@@ -799,15 +815,16 @@ function renderCheckinForm(customerId) {
   );
 }
 
-async function doCheckin(customerId, latitude, longitude) {
+async function doCheckin(customerId, latitude, longitude, accuracy) {
   const btn = document.getElementById('checkin-btn');
   btn.disabled = true;
   btn.textContent = 'Memproses...';
 
   try {
+    const possibleRoot = await checkPossibleRoot();
     const result = await api('/visits/checkin', {
       method: 'POST',
-      body: JSON.stringify({ customerId, latitude, longitude }),
+      body: JSON.stringify({ customerId, latitude, longitude, accuracy, possibleRoot }),
     });
 
     document.getElementById('checkin-status').innerHTML = `
