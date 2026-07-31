@@ -77,13 +77,39 @@ async function api(path, options = {}) {
   return data;
 }
 
+// G7: dipakai untuk upload FormData (foto) dan download blob (PDF struk) -
+// sebelumnya logika bikin header auth ditulis ulang 4 kali terpisah, dan
+// tidak satu pun menangani sesi habis (401). Sekarang satu fungsi bersama,
+// pemanggil tinggal urus body responsnya sendiri (json/blob) sesuai kebutuhan.
+async function apiRaw(path, options = {}) {
+  const headers = options.headers || {};
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
+
+  const res = await fetch(API + path, { ...options, headers });
+
+  if (res.status === 401 && state.token) {
+    localStorage.removeItem('sc_token');
+    localStorage.removeItem('sc_user');
+    state.token = null;
+    state.user = null;
+    navigate('#/home');
+    render();
+    throw new Error('Sesi login sudah berakhir. Silakan login ulang.');
+  }
+
+  return res;
+}
+
 function formatRupiah(n) {
   return 'Rp' + Math.round(n).toLocaleString('id-ID');
 }
 
 function formatJam(dateStr) {
-  const d = new Date(dateStr);
-  return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+  // A17: sebelumnya pakai getHours()/getMinutes() - itu jam ZONA WAKTU HP,
+  // bisa salah kalau HP sales salah setel zona waktu. Server selalu WIB
+  // (Asia/Jakarta), jadi tampilan dipaksa sama supaya konsisten.
+  return new Date(dateStr).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 // Ambil lokasi GPS - otomatis pakai plugin Capacitor (APK) atau browser API (web)
@@ -231,7 +257,9 @@ async function renderHome() {
   }
 
   try {
-    const [customers, visits, messages] = await Promise.all([api('/customers'), api('/visits'), api('/messages').catch(() => [])]);
+    const [customers, visits, orders, messages] = await Promise.all([
+      api('/customers'), api('/visits'), api('/orders').catch(() => []), api('/messages').catch(() => []),
+    ]);
     state.customers = customers;
 
     const today = new Date().toDateString();
@@ -242,6 +270,23 @@ async function renderHome() {
     const totalCount = state.customers.length;
     const progressPct = totalCount > 0 ? Math.round((visitedCount / totalCount) * 100) : 0;
 
+    const revenueToday = orders
+      .filter(o => new Date(o.createdAt).toDateString() === today)
+      .reduce((sum, o) => sum + o.totalAmount, 0);
+
+    // Kapan terakhir tiap customer dikunjungi - dipakai utk urutan prioritas,
+    // supaya sales tahu harus ke mana dulu tanpa perlu buka menu lain.
+    const lastVisitMap = {};
+    visits.forEach(v => {
+      const t = new Date(v.checkinAt).getTime();
+      if (!lastVisitMap[v.customerId] || t > lastVisitMap[v.customerId]) lastVisitMap[v.customerId] = t;
+    });
+    const now = Date.now();
+    const daysSinceVisit = (customerId) => {
+      const last = lastVisitMap[customerId];
+      return last ? Math.floor((now - last) / 86400000) : 9999; // belum pernah dikunjungi = paling prioritas
+    };
+
     const golonganPalette = [
       { bg: 'oklch(93% 0.05 145 / 0.6)', color: '#057C43' },
       { bg: 'oklch(94% 0.09 120 / 0.55)', color: '#5c7a12' },
@@ -251,7 +296,16 @@ async function renderHome() {
     const golonganColorMap = {};
     let colorIdx = 0;
 
-    const rows = state.customers.map(c => {
+    // Urutkan: yang sudah dikunjungi hari ini ke bawah, sisanya dari yang
+    // paling lama tidak dikunjungi (paling perlu perhatian) ke atas.
+    const sortedCustomers = [...state.customers].sort((a, b) => {
+      const aVisited = visitedTodayIds.has(a.id);
+      const bVisited = visitedTodayIds.has(b.id);
+      if (aVisited !== bVisited) return aVisited ? 1 : -1;
+      return daysSinceVisit(b.id) - daysSinceVisit(a.id);
+    });
+
+    const rows = sortedCustomers.map(c => {
       const visited = visitedTodayIds.has(c.id);
       const catName = c.category?.name || '-';
       if (!golonganColorMap[catName]) golonganColorMap[catName] = golonganPalette[colorIdx++ % golonganPalette.length];
@@ -260,12 +314,21 @@ async function renderHome() {
       const avatarColors = ['#057C43', '#7AB41D', '#B57837', '#5661d6'];
       const avatarColor = avatarColors[Math.abs(c.name.charCodeAt(0)) % avatarColors.length];
 
+      const days = daysSinceVisit(c.id);
+      let priorityLabel = '';
+      if (!visited) {
+        if (days === 9999) priorityLabel = '<span style="font-size:10.5px;color:#B3261E;">Belum pernah dikunjungi</span>';
+        else if (days >= 14) priorityLabel = `<span style="font-size:10.5px;color:#B3261E;">${days} hari tanpa kunjungan</span>`;
+        else if (days >= 7) priorityLabel = `<span style="font-size:10.5px;color:#8a5c26;">${days} hari tanpa kunjungan</span>`;
+      }
+
       return `
-        <div onclick="navigate('#/customer/${c.id}')" style="display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:11px 13px;cursor:pointer;margin-bottom:9px;">
+        <div onclick="navigate('#/customer/${c.id}')" style="display:flex;align-items:center;gap:11px;background:#fff;border:1px solid ${!visited && days >= 14 ? '#F0C4C0' : '#ECECEC'};border-radius:12px;padding:11px 13px;cursor:pointer;margin-bottom:9px;">
           <div style="width:38px;height:38px;border-radius:50%;background:${avatarColor};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;">${initials}</div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:700;color:#1a1a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.name)}</div>
             <div style="font-size:12px;color:#888888;">${esc(c.city?.name || '-')}</div>
+            ${priorityLabel}
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
             <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${gc.bg};color:${gc.color};">${esc(catName)}</span>
@@ -274,10 +337,12 @@ async function renderHome() {
         </div>`;
     }).join('');
 
+    // Broadcast dipindah jadi baris kecil (bukan banner besar) - supaya tidak
+    // bersaing dengan tombol utama, tetap terlihat tanpa mendominasi layar.
     const broadcastHtml = messages && messages[0] ? `
-      <div style="display:flex;align-items:center;gap:12px;background:linear-gradient(120deg,#FFF6DF,#FCE9C4);border:1px solid #F0D9A6;border-radius:14px;padding:13px 16px;margin-bottom:16px;">
-        <div style="width:6px;align-self:stretch;border-radius:3px;background:linear-gradient(180deg,#B57837,#FFE370);"></div>
-        <div style="font-size:12.5px;color:#5c4a24;line-height:1.5;"><b>${esc(messages[0].fromName)}:</b> ${esc(messages[0].text)}</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;margin-bottom:14px;background:#F7F5EE;border-radius:10px;">
+        <span style="width:6px;height:6px;border-radius:50%;background:#B57837;flex-shrink:0;"></span>
+        <div style="font-size:12px;color:#5c5652;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>${esc(messages[0].fromName)}:</b> ${esc(messages[0].text)}</div>
       </div>` : '';
 
     app.innerHTML = `
@@ -287,16 +352,24 @@ async function renderHome() {
             <div style="font-size:13px;color:#777777;">Selamat datang,</div>
             <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:20px;color:#1a1a1a;">${esc(state.user?.name || '')}</div>
           </div>
-          <div style="font-size:12px;color:#999999;text-align:right;margin-top:4px;">${new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}</div>
+          <div style="font-size:12px;color:#999999;text-align:right;margin-top:4px;">${new Date().toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'short' })}</div>
         </div>
 
         <div style="background:linear-gradient(135deg,#057C43,#0a5c33);border-radius:16px;padding:18px 20px;margin-bottom:14px;color:#fff;box-shadow:0 10px 24px -10px rgba(5,124,67,0.5);">
-          <div style="font-size:12px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.85;margin-bottom:6px;">Kunjungan Hari Ini</div>
-          <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:10px;">
-            <div style="font-family:'Trebuchet MS',sans-serif;font-size:30px;font-weight:700;">${visitedCount}</div>
-            <div style="font-size:15px;opacity:0.85;">/ ${totalCount} customer</div>
+          <div style="display:flex;justify-content:space-between;gap:12px;">
+            <div>
+              <div style="font-size:11px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.85;margin-bottom:6px;">Kunjungan Hari Ini</div>
+              <div style="display:flex;align-items:baseline;gap:6px;">
+                <div style="font-family:'Trebuchet MS',sans-serif;font-size:26px;font-weight:700;">${visitedCount}</div>
+                <div style="font-size:13px;opacity:0.85;">/ ${totalCount}</div>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:11px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.85;margin-bottom:6px;">Revenue Hari Ini</div>
+              <div style="font-family:'Trebuchet MS',sans-serif;font-size:26px;font-weight:700;">Rp${Math.round(revenueToday).toLocaleString('id-ID')}</div>
+            </div>
           </div>
-          <div style="height:6px;border-radius:3px;background:rgba(255,255,255,0.25);overflow:hidden;">
+          <div style="height:6px;border-radius:3px;background:rgba(255,255,255,0.25);overflow:hidden;margin-top:12px;">
             <div style="height:100%;width:${progressPct}%;background:linear-gradient(90deg,#FFE370,#B57837);border-radius:3px;"></div>
           </div>
         </div>
@@ -335,10 +408,7 @@ async function openReceiptPdf(orderId) {
   const btn = document.getElementById('print-receipt-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan PDF...'; }
   try {
-    const headers = {};
-    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-    if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
-    const res = await fetch(API + '/orders/' + orderId + '/receipt-pdf', { headers });
+    const res = await apiRaw('/orders/' + orderId + '/receipt-pdf');
     if (!res.ok) throw new Error('Gagal membuat struk PDF.');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -364,7 +434,7 @@ async function renderReceipt(orderId) {
   try {
     const o = await api('/orders/' + orderId);
     const orderNumber = 'SC-' + new Date(o.createdAt).toISOString().slice(0, 10).replace(/-/g, '') + '-' + o.id.slice(-4).toUpperCase();
-    const tanggal = new Date(o.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const tanggal = new Date(o.createdAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const payLabel = { CASH: 'Cash', TEMPO: 'Tempo', CONSIGNMENT: 'Konsinyasi' }[o.paymentMethod] || o.paymentMethod;
 
     const itemRows = o.items.map(it => `
@@ -386,7 +456,7 @@ async function renderReceipt(orderId) {
           <div style="text-align:center;margin-bottom:10px;">
             <div style="font-weight:700;font-size:14px;letter-spacing:0.5px;">DAMAR FLOUR MILLS</div>
             <div style="font-size:10px;color:#555;">PT. Damar Ampat Sekawan</div>
-            <div style="font-size:10px;color:#555;">Sales Canvas System</div>
+            <div style="font-size:10px;color:#555;">Damarindo System</div>
           </div>
           <div style="border-top:1px dashed #999;margin:8px 0;"></div>
           <div style="text-align:center;font-weight:700;font-size:12px;margin-bottom:6px;">BUKTI PESANAN</div>
@@ -437,7 +507,7 @@ async function renderCustomerDetail(customerId) {
 
     const historyRows = (c.visits || []).slice(0, 5).map(v => `
       <div style="display:flex;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:10px;padding:10px 13px;font-size:12.5px;margin-bottom:8px;">
-        <span style="color:#303030;">${new Date(v.checkinAt).toLocaleDateString('id-ID')}</span>
+        <span style="color:#303030;">${new Date(v.checkinAt).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' })}</span>
         <span style="color:#888888;">${formatJam(v.checkinAt)}</span>
       </div>`).join('') || '<p style="color:#999;font-size:13px;">Belum ada riwayat kunjungan.</p>';
 
@@ -669,10 +739,7 @@ async function submitNewCustomer() {
     const compressedPhoto = await compressImage(photoFile);
     formData.append('photo', compressedPhoto, 'photo.jpg');
 
-    const headers = {};
-    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-    if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
-    const res = await fetch(API + '/customers', { method: 'POST', headers, body: formData });
+    const res = await apiRaw('/customers', { method: 'POST', body: formData });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
 
@@ -766,10 +833,7 @@ async function submitEditCustomer(customerId) {
       formData.append('photo', compressedPhoto, 'photo.jpg');
     }
 
-    const headers = {};
-    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-    if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
-    const res = await fetch(API + '/customers/' + customerId, { method: 'PUT', headers, body: formData });
+    const res = await apiRaw('/customers/' + customerId, { method: 'PUT', body: formData });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
 
@@ -1001,7 +1065,7 @@ async function renderHistory() {
       <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:12px 14px;margin-bottom:8px;">
         <div>
           <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${esc(v.customer.name)}</div>
-          <div style="font-size:12px;color:#888888;margin-top:2px;">${new Date(v.checkinAt).toLocaleDateString('id-ID')}</div>
+          <div style="font-size:12px;color:#888888;margin-top:2px;">${new Date(v.checkinAt).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' })}</div>
         </div>
         <div style="font-size:13px;font-weight:700;color:#057C43;">${formatJam(v.checkinAt)}</div>
       </div>`).join('') || '<p style="color:#999;font-size:13px;">Belum ada riwayat kunjungan.</p>';
@@ -1113,9 +1177,7 @@ async function submitProfilePhoto(input) {
     const compressed = await compressImage(file);
     const formData = new FormData();
     formData.append('photo', compressed, 'photo.jpg');
-    const headers = {};
-    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-    const res = await fetch(API + '/users/me/photo', { method: 'POST', headers, body: formData });
+    const res = await apiRaw('/users/me/photo', { method: 'POST', body: formData });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Gagal upload foto.');
     state.user = data.user;
@@ -1132,7 +1194,7 @@ function showChangePasswordForm() {
   box.innerHTML = `
     <div style="background:#fff;border:1px solid #ECECEC;border-radius:14px;padding:16px;margin-bottom:10px;">
       <input type="password" id="cp-current" placeholder="Password saat ini" style="width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1.5px solid #E4E4E4;margin-bottom:8px;font-size:14px;">
-      <input type="password" id="cp-new" placeholder="Password baru (min. 6 karakter)" style="width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1.5px solid #E4E4E4;margin-bottom:10px;font-size:14px;">
+      <input type="password" id="cp-new" placeholder="Password baru (min. 10 karakter)" style="width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1.5px solid #E4E4E4;margin-bottom:10px;font-size:14px;">
       <div id="cp-error"></div>
       <button onclick="submitChangePassword()" style="width:100%;padding:12px;border:none;border-radius:10px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan Password</button>
     </div>`;
