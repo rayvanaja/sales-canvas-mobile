@@ -61,6 +61,11 @@ async function api(path, options = {}) {
   const res = await fetch(API + path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
 
+  if (data.appDisabled) {
+    renderAppDisabledScreen();
+    throw new Error(data.error || 'Aplikasi sedang dinonaktifkan sementara.');
+  }
+
   if (res.status === 401 && state.token) {
     // Sesi login tidak valid/kedaluwarsa -> keluar otomatis, jangan biarkan
     // pengguna terjebak di layar error tanpa jalan keluar.
@@ -75,6 +80,19 @@ async function api(path, options = {}) {
 
   if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
   return data;
+}
+
+function renderAppDisabledScreen() {
+  app.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F7F5EE;padding:24px;">
+      <div style="max-width:320px;text-align:center;">
+        <div style="width:56px;height:56px;border-radius:16px;background:#052C1B;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;">
+          <span style="color:#fff;font-size:24px;">⏸</span>
+        </div>
+        <h2 style="font-family:'Trebuchet MS',sans-serif;font-size:18px;margin:0 0 8px;">Aplikasi Sedang Dinonaktifkan</h2>
+        <p style="font-size:13px;color:#777;line-height:1.6;margin:0;">Sistem sedang dalam mode pemeliharaan sementara. Hubungi Admin untuk informasi lebih lanjut.</p>
+      </div>
+    </div>`;
 }
 
 // G7: dipakai untuk upload FormData (foto) dan download blob (PDF struk) -
@@ -200,6 +218,16 @@ function renderLogin() {
 
   document.getElementById('login-submit-btn').addEventListener('click', handleLogin);
   document.getElementById('login-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(e); });
+
+  // Cek proaktif SEBELUM sales sempat login - kalau aplikasi sedang
+  // dinonaktifkan, langsung kasih tahu, jangan biarkan mereka bingung
+  // kenapa login gagal terus.
+  fetch(API + '/app-status').then(r => r.json()).then(d => {
+    if (!d.enabled) {
+      const errBox = document.getElementById('login-error');
+      if (errBox) errBox.innerHTML = `<div class="error-box">Aplikasi sedang dalam mode pemeliharaan. Hubungi Admin.</div>`;
+    }
+  }).catch(() => {});
 }
 
 async function handleLogin(e) {
@@ -254,6 +282,16 @@ async function renderHome() {
     getCurrentLocation((latitude, longitude) => {
       api('/users/me/location', { method: 'POST', body: JSON.stringify({ latitude, longitude }) }).catch(() => {});
     }, () => {});
+
+    // FITUR NONAKTIF CUSTOMER: dipanggil setiap kali Home dibuka, tapi server
+    // hanya mengirim nama yang BELUM pernah diberitahukan (lihat penanda
+    // lastDeactivationCheckAt di backend) - jadi aman dipanggil berulang,
+    // popup cuma muncul saat memang ada yang baru.
+    api('/customers/notif/deactivation-notice').then((res) => {
+      if (res.names && res.names.length) {
+        alert(`Pemberitahuan:\n\n${res.names.length} customer Anda telah dinonaktifkan kantor pusat:\n${res.names.map(n => '• ' + n).join('\n')}\n\nCustomer ini sudah tidak muncul lagi di daftar Anda.`);
+      }
+    }).catch(() => {});
   }
 
   try {
@@ -404,6 +442,25 @@ async function showAiRecommendation() {
 }
 
 // ====== STRUK / BUKTI PESANAN ======
+// FIX BUG-003: dulu window.open(blob URL) dipakai untuk buka PDF di tab baru
+// saat APK - tapi blob URL tidak bisa diresolusi WebView Android sebagai
+// "tab baru" sama sekali, jadi gagal DIAM-DIAM (tidak error, tidak apa-apa).
+// Solusi resmi: tulis PDF ke penyimpanan HP lewat plugin Filesystem, lalu
+// buka menu Bagikan Android bawaan (WhatsApp, Drive, printer, dst) lewat
+// plugin Share - keduanya cara resmi Capacitor untuk kasus persis ini.
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      // reader.result = "data:application/pdf;base64,XXXX" - Filesystem
+      // plugin cuma butuh bagian base64 setelah koma.
+      resolve(String(reader.result).split(',')[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function openReceiptPdf(orderId) {
   const btn = document.getElementById('print-receipt-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan PDF...'; }
@@ -411,20 +468,36 @@ async function openReceiptPdf(orderId) {
     const res = await apiRaw('/orders/' + orderId + '/receipt-pdf');
     if (!res.ok) throw new Error('Gagal membuat struk PDF.');
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    if (IS_NATIVE_APP) {
-      // Di APK, buka di tab/viewer baru supaya bisa dibagikan lewat WA dsb.
-      window.open(url, '_blank');
+    const fileName = 'struk-' + orderId.slice(-6) + '.pdf';
+
+    if (IS_NATIVE_APP && window.Capacitor?.Plugins?.Filesystem && window.Capacitor?.Plugins?.Share) {
+      const base64Data = await blobToBase64(blob);
+      const written = await window.Capacitor.Plugins.Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: 'CACHE', // tidak butuh izin penyimpanan tambahan
+      });
+      await window.Capacitor.Plugins.Share.share({
+        title: 'Struk Pesanan',
+        url: written.uri,
+        dialogTitle: 'Simpan atau bagikan struk',
+      });
+    } else if (IS_NATIVE_APP) {
+      // APK tapi plugin belum ter-sync (versi lama) - beri pesan jelas,
+      // bukan diam-diam gagal seperti sebelumnya.
+      throw new Error('Fitur simpan struk butuh update aplikasi terbaru. Silakan update APK Anda.');
     } else {
+      // Browser web biasa (dashboard/mobile-web) - unduh langsung seperti biasa.
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'struk-' + orderId.slice(-6) + '.pdf';
+      a.download = fileName;
       a.click();
     }
   } catch (err) {
     alert(err.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Cetak / Simpan Struk (PDF)'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Simpan Struk (PDF)'; }
   }
 }
 
@@ -479,7 +552,7 @@ async function renderReceipt(orderId) {
         </div>
 
         <div class="receipt-noprint" style="width:280px;margin-top:16px;display:flex;flex-direction:column;gap:10px;">
-          <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Cetak / Simpan Struk (PDF)</button>
+          <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan Struk (PDF)</button>
           <button onclick="navigate('#/home')" style="width:100%;padding:13px;border:1.5px solid #D8D8D8;border-radius:11px;background:#fff;color:#303030;font-weight:700;font-size:13.5px;cursor:pointer;">Kembali ke Home</button>
         </div>
       </div>
@@ -562,6 +635,7 @@ async function loadCityOptions(provinceSelectId, citySelectId, selectedCityId) {
 
 async function renderAddCustomerForm() {
   isSubmittingNewCustomer = false;
+  flaggedInactiveCandidateId = null;
   app.innerHTML = `<div class="topbar-nav"><button class="back-btn" onclick="navigate('#/home')">‹</button><p class="title">Memuat...</p></div>`;
 
   try {
@@ -687,16 +761,35 @@ async function checkNearbyBeforeSubmit() {
   }
 }
 
+// FITUR PERINGATAN DUPLIKAT: disimpan supaya submitNewCustomer tahu ID kandidat
+// nonaktif yang sempat dilihat sales, untuk dikirim ke server sebagai catatan
+// yang nanti ditinjau TL/Manager di layar Approval.
+let flaggedInactiveCandidateId = null;
+
 function renderCandidateList(candidates) {
   const btn = document.getElementById('check-customer-btn');
   btn.style.display = 'none';
 
-  const rows = candidates.map(c => `
-    <div style="display:flex;align-items:center;gap:10px;background:#fff;border-radius:9px;padding:8px 10px;margin-bottom:8px;">
-      ${c.photoUrl ? `<img src="${API}${c.photoUrl}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div style="width:30px;height:30px;border-radius:50%;background:#8a5c26;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${c.name.slice(0,2).toUpperCase()}</div>`}
-      <div style="flex:1;"><div style="font-size:12.5px;font-weight:700;color:#1a1a1a;">${esc(c.name)}</div><div style="font-size:11px;color:#999999;">± ${c.distanceMeters}m dari lokasi ini</div></div>
-      <button onclick="navigate('#/edit-customer/${c.id}')" style="width:auto;border:none;background:#8a5c26;color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Ini sama</button>
-    </div>`).join('');
+  // Backend sudah mengurutkan kandidat nonaktif lebih dulu - ambil yang
+  // pertama kalau memang berstatus nonaktif.
+  flaggedInactiveCandidateId = candidates.find(c => c.active === false)?.id || null;
+
+  const rows = candidates.map(c => {
+    const nonaktif = c.active === false;
+    return `
+    <div style="background:#fff;border:1.5px solid ${nonaktif ? '#E3B0AC' : '#eee'};border-radius:9px;padding:10px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${c.photoUrl ? `<img src="${API}${c.photoUrl}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div style="width:30px;height:30px;border-radius:50%;background:#8a5c26;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${c.name.slice(0,2).toUpperCase()}</div>`}
+        <div style="flex:1;">
+          <div style="font-size:12.5px;font-weight:700;color:#1a1a1a;">${esc(c.name)}</div>
+          <div style="font-size:11px;color:#999999;">± ${c.distanceMeters}m dari lokasi ini</div>
+          ${nonaktif ? `<span style="display:inline-block;margin-top:3px;font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:20px;background:#FBEAE9;color:#B3261E;">NONAKTIF</span>` : ''}
+        </div>
+        <button onclick="navigate('#/edit-customer/${c.id}')" style="width:auto;border:none;background:#8a5c26;color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Ini sama</button>
+      </div>
+      ${nonaktif ? `<div style="margin-top:8px;padding:8px 9px;background:#FBEAE9;border-radius:8px;font-size:11px;color:#7A241E;line-height:1.5;">⚠ <b>Toko ini sedang dinonaktifkan</b> kantor pusat. Kemungkinan besar ini toko yang sama — pastikan dulu sebelum lanjut mendaftarkan sebagai toko baru.</div>` : ''}
+    </div>`;
+  }).join('');
 
   document.getElementById('candidate-list').innerHTML = `
     <div style="background:#FFF6DF;border:1px solid #F0D9A6;border-radius:11px;padding:11px 13px;">
@@ -736,6 +829,10 @@ async function submitNewCustomer() {
     formData.append('longitude', addCustomerLocation.longitude);
     if (addCustomerLocation.accuracy !== undefined) formData.append('accuracy', addCustomerLocation.accuracy);
     formData.append('possibleRoot', await checkPossibleRoot());
+    // FITUR PERINGATAN DUPLIKAT: kalau sales sempat melihat kandidat nonaktif
+    // tapi tetap lanjut, ID-nya diikutkan supaya server bisa mencatat untuk
+    // ditinjau ulang TL/Manager di layar Approval.
+    if (flaggedInactiveCandidateId) formData.append('similarToInactiveId', flaggedInactiveCandidateId);
     const compressedPhoto = await compressImage(photoFile);
     formData.append('photo', compressedPhoto, 'photo.jpg');
 
@@ -743,6 +840,7 @@ async function submitNewCustomer() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
 
+    flaggedInactiveCandidateId = null;
     navigate('#/home');
   } catch (err) {
     errorBox.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
