@@ -58,7 +58,16 @@ async function api(path, options = {}) {
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
   if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
 
-  const res = await fetch(API + path, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(API + path, { ...options, headers });
+  } catch (networkErr) {
+    // FIX: fetch() yang gagal total (tidak ada sinyal/koneksi terputus) dulu
+    // melempar pesan mentah teknis (mis. "Failed to fetch") yang membingungkan
+    // sales di lapangan. Sekarang diterjemahkan ke pesan yang jelas - berlaku
+    // untuk SEMUA pemanggilan api(), bukan cuma order.
+    throw new Error('Tidak bisa terhubung ke server. Periksa sinyal internet Anda, lalu coba lagi.');
+  }
   const data = await res.json().catch(() => ({}));
 
   if (data.appDisabled) {
@@ -104,7 +113,12 @@ async function apiRaw(path, options = {}) {
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
   if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
 
-  const res = await fetch(API + path, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(API + path, { ...options, headers });
+  } catch (networkErr) {
+    throw new Error('Tidak bisa terhubung ke server. Periksa sinyal internet Anda, lalu coba lagi.');
+  }
 
   if (res.status === 401 && state.token) {
     localStorage.removeItem('sc_token');
@@ -1001,7 +1015,23 @@ async function doCheckin(customerId, latitude, longitude, accuracy) {
 }
 
 // ====== INPUT ORDER ======
+// LAPIS 1 ANTI-DUPLIKAT: dibuat SEKALI saat form order dibuka, bukan setiap
+// tombol ditekan. Kalau sales terpaksa tekan "Kirim Pesanan" berkali-kali
+// karena sinyal jelek, kode ini tetap sama di setiap percobaan - server
+// memakainya untuk tahu "ini pengiriman ulang dari order yang sama" dan
+// tidak akan pernah membuat order kembar walau permintaannya terkirim >1 kali.
+let currentOrderClientId = null;
+function buatKodeUnik() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  // Fallback untuk WebView lama yang belum dukung crypto.randomUUID().
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 async function renderOrderForm(customerId, visitId) {
+  currentOrderClientId = buatKodeUnik();
   const customer = state.customers.find(c => c.id === customerId);
   app.innerHTML = navHeaderHtml('Memuat produk...', '#/customer/' + customerId);
 
@@ -1125,8 +1155,9 @@ async function submitOrder(customerId, visitId) {
   try {
     const order = await api('/orders', {
       method: 'POST',
-      body: JSON.stringify({ customerId, visitId: (visitId && visitId !== 'none') ? visitId : null, paymentMethod, items }),
+      body: JSON.stringify({ customerId, visitId: (visitId && visitId !== 'none') ? visitId : null, paymentMethod, items, clientRequestId: currentOrderClientId }),
     });
+    currentOrderClientId = null;
     navigate('#/receipt/' + order.id);
   } catch (err) {
     errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
@@ -1244,7 +1275,7 @@ async function renderProfile() {
         <label for="profile-photo-input" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#303030;border-bottom:1px solid #F1F1EE;cursor:pointer;">📷 <span>Ubah Foto Profil</span></label>
         <input type="file" id="profile-photo-input" accept="image/*" capture="environment" style="display:none;" onchange="submitProfilePhoto(this)">
         <div onclick="showChangePasswordForm()" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#303030;border-bottom:1px solid #F1F1EE;cursor:pointer;">🔒 <span>Ganti Password</span></div>
-        <div onclick="confirmLogout()" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#B3261E;cursor:pointer;">⏻ <span>Keluar</span></div>
+        <div onclick="confirmLogout()" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#B3261E;cursor:pointer;">🚪 <span>Keluar</span></div>
       </div>
       <div id="change-password-box" style="margin-top:10px;"></div>
     </div>
