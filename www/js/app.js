@@ -195,7 +195,7 @@ function render() {
   else if (parts[0] === 'checkin') renderCheckinForm(parts[1]);
   else if (parts[0] === 'order') renderOrderForm(parts[1], parts[2]);
   else if (parts[0] === 'receipt') renderReceipt(parts[1]);
-  else if (parts[0] === 'history') renderHistory();
+  else if (parts[0] === 'history') renderHistory(parts[1] || 'kunjungan');
   else if (parts[0] === 'profile') renderProfile();
   else renderHome();
 }
@@ -515,6 +515,11 @@ async function openReceiptPdf(orderId) {
   }
 }
 
+// Diset sesaat sebelum navigate ke #/receipt/... supaya tombol "kembali" di
+// struk tahu harus balik ke mana (Home setelah order baru, atau Riwayat Order
+// kalau dibuka dari sana).
+let receiptReturnTo = '#/home';
+
 async function renderReceipt(orderId) {
   app.innerHTML = `<div style="padding:22px 20px;"><p style="color:var(--text-muted);font-size:14px;">Memuat struk...</p></div>`;
 
@@ -534,7 +539,7 @@ async function renderReceipt(orderId) {
 
     app.innerHTML = `
       <div class="receipt-noprint" style="flex-shrink:0;display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #ECECEC;background:#fff;">
-        <button onclick="navigate('#/home')" style="border:none;background:none;font-size:18px;color:#303030;cursor:pointer;">←</button>
+        <button onclick="navigate('${receiptReturnTo}')" style="border:none;background:none;font-size:18px;color:#303030;cursor:pointer;">←</button>
         <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:16px;color:#1a1a1a;">Bukti Pesanan</div>
       </div>
 
@@ -1158,6 +1163,7 @@ async function submitOrder(customerId, visitId) {
       body: JSON.stringify({ customerId, visitId: (visitId && visitId !== 'none') ? visitId : null, paymentMethod, items, clientRequestId: currentOrderClientId }),
     });
     currentOrderClientId = null;
+    receiptReturnTo = '#/home';
     navigate('#/receipt/' + order.id);
   } catch (err) {
     errorBox.innerHTML = `<div class="error-box">${err.message}</div>`;
@@ -1185,27 +1191,156 @@ async function finishVisitWithoutOrder(customerId, visitId) {
 }
 
 // ====== RIWAYAT ======
-async function renderHistory() {
+// ====== RIWAYAT (Kunjungan & Order) ======
+// FITUR RIWAYAT + FILTER TANGGAL: dulu menu ini cuma Riwayat Kunjungan,
+// tidak ada Riwayat Order sama sekali (BUG-005) - sales tidak bisa buka lagi
+// struk order lama (BUG-006). Sekarang dipecah 2 sub-tab, keduanya punya
+// filter tanggal yang sama caranya.
+let historyFilterMode = '7hari'; // 'hari-ini' | '7hari' | '30hari' | 'custom'
+let historyCustomFrom = null;
+let historyCustomTo = null;
+let historyShowDatePicker = false;
+
+// Selalu berpatokan ke zona waktu Asia/Jakarta (sama seperti server), BUKAN
+// UTC bawaan toISOString() - kalau pakai UTC, sales yang buka HP dini hari
+// (mis. 00:30 WIB) bisa melihat "Hari Ini" salah menunjuk tanggal kemarin.
+function jakartaTodayStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+}
+function tambahHari(dateStr, delta) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+function hitungRentangTanggal(mode) {
+  const toStr = jakartaTodayStr();
+  if (mode === 'hari-ini') return { from: toStr, to: toStr };
+  if (mode === '7hari') return { from: tambahHari(toStr, -6), to: toStr };
+  if (mode === '30hari') return { from: tambahHari(toStr, -29), to: toStr };
+  // custom
+  return { from: historyCustomFrom || toStr, to: historyCustomTo || toStr };
+}
+
+function formatTanggalIndo(dateStr) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function pilihFilterHistory(subTab, mode) {
+  historyFilterMode = mode;
+  historyShowDatePicker = false;
+  renderHistory(subTab);
+}
+
+function toggleDatePickerHistory(subTab) {
+  historyShowDatePicker = !historyShowDatePicker;
+  renderHistory(subTab);
+}
+
+function terapkanCustomDateHistory(subTab) {
+  const from = document.getElementById('history-from').value;
+  const to = document.getElementById('history-to').value;
+  if (!from || !to) { alert('Pilih tanggal awal dan akhir dulu.'); return; }
+  if (new Date(from) > new Date(to)) { alert('Tanggal awal tidak boleh setelah tanggal akhir.'); return; }
+  const rentangHari = (new Date(to) - new Date(from)) / 86400000;
+  if (rentangHari > 90) { alert('Rentang tanggal maksimal 90 hari sekali tampil.'); return; }
+  historyCustomFrom = from;
+  historyCustomTo = to;
+  historyFilterMode = 'custom';
+  historyShowDatePicker = false;
+  renderHistory(subTab);
+}
+
+function filterChipsHtml(subTab) {
+  const chip = (mode, label) => `<div onclick="pilihFilterHistory('${subTab}','${mode}')" style="padding:6px 12px;border-radius:20px;font-size:11.5px;font-weight:700;border:1.3px solid ${historyFilterMode === mode ? '#057C43' : '#ECECEC'};color:${historyFilterMode === mode ? '#fff' : '#777'};background:${historyFilterMode === mode ? '#057C43' : '#fff'};white-space:nowrap;cursor:pointer;">${label}</div>`;
+  return `
+    <div style="display:flex;gap:7px;margin-bottom:12px;align-items:center;">
+      ${chip('hari-ini', 'Hari Ini')}
+      ${chip('7hari', '7 Hari')}
+      ${chip('30hari', '30 Hari')}
+      <div onclick="toggleDatePickerHistory('${subTab}')" style="width:32px;height:32px;border-radius:50%;border:1.3px solid ${historyFilterMode === 'custom' ? '#057C43' : '#ECECEC'};background:${historyFilterMode === 'custom' ? '#057C43' : '#fff'};color:${historyFilterMode === 'custom' ? '#fff' : '#555'};display:flex;align-items:center;justify-content:center;font-size:14px;margin-left:auto;flex:none;cursor:pointer;">&#128197;</div>
+    </div>
+    ${historyShowDatePicker ? `
+    <div style="background:#fff;border:1px solid #ECECEC;border-radius:14px;padding:16px;margin-bottom:14px;">
+      <p style="font-size:12.5px;font-weight:700;color:#1B2A4A;margin:0 0 10px;">Pilih rentang tanggal</p>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:10.5px;color:#999;display:block;margin-bottom:4px;">Dari tanggal</label>
+        <input type="date" id="history-from" value="${historyCustomFrom || ''}" style="width:100%;border:1.3px solid #ECECEC;border-radius:8px;padding:9px 10px;font-size:12.5px;color:#333;background:#FAFAFA;box-sizing:border-box;">
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:10.5px;color:#999;display:block;margin-bottom:4px;">Sampai tanggal</label>
+        <input type="date" id="history-to" value="${historyCustomTo || ''}" style="width:100%;border:1.3px solid #ECECEC;border-radius:8px;padding:9px 10px;font-size:12.5px;color:#333;background:#FAFAFA;box-sizing:border-box;">
+      </div>
+      <button onclick="terapkanCustomDateHistory('${subTab}')" style="width:100%;background:#057C43;color:#fff;border:none;border-radius:8px;padding:10px;font-size:12.5px;font-weight:700;cursor:pointer;">Terapkan</button>
+      <p style="font-size:10.5px;color:#999;margin:8px 0 0;">Rentang maksimal 90 hari sekali tampil, supaya HP tidak berat.</p>
+    </div>` : ''}`;
+}
+
+async function renderHistory(subTab) {
+  subTab = subTab === 'order' ? 'order' : 'kunjungan';
   app.innerHTML = `<div style="padding:22px 20px;"><p style="color:var(--text-muted);font-size:14px;">Memuat...</p></div>${tabBarHtml('history')}`;
 
-  try {
-    const visits = await api('/visits');
-    const rows = visits.map(v => `
-      <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:12px 14px;margin-bottom:8px;">
-        <div>
-          <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${esc(v.customer.name)}</div>
-          <div style="font-size:12px;color:#888888;margin-top:2px;">${new Date(v.checkinAt).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' })}</div>
-        </div>
-        <div style="font-size:13px;font-weight:700;color:#057C43;">${formatJam(v.checkinAt)}</div>
-      </div>`).join('') || '<p style="color:#999;font-size:13px;">Belum ada riwayat kunjungan.</p>';
+  const { from, to } = hitungRentangTanggal(historyFilterMode);
+  const segHtml = `
+    <div style="display:flex;background:#EDEDEA;border-radius:11px;padding:3px;margin-bottom:14px;">
+      <div onclick="navigate('#/history/kunjungan')" style="flex:1;text-align:center;padding:8px 0;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;background:${subTab === 'kunjungan' ? '#fff' : 'transparent'};color:${subTab === 'kunjungan' ? '#0A5C37' : '#777'};">Kunjungan</div>
+      <div onclick="navigate('#/history/order')" style="flex:1;text-align:center;padding:8px 0;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;background:${subTab === 'order' ? '#fff' : 'transparent'};color:${subTab === 'order' ? '#0A5C37' : '#777'};">Order</div>
+    </div>`;
 
-    app.innerHTML = `
-      <div style="flex:1;overflow-y:auto;padding:22px 20px 16px;">
-        <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:20px;color:#1a1a1a;margin-bottom:16px;">Riwayat Kunjungan</div>
-        ${rows}
-      </div>
-      ${tabBarHtml('history')}
-    `;
+  try {
+    if (subTab === 'kunjungan') {
+      const visits = await api(`/visits?from=${from}&to=${to}`);
+      const rows = visits.map(v => `
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:12px 14px;margin-bottom:8px;">
+          <div>
+            <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;">${esc(v.customer.name)}</div>
+            <div style="font-size:12px;color:#888888;margin-top:2px;">${new Date(v.checkinAt).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' })}</div>
+          </div>
+          <div style="font-size:13px;font-weight:700;color:#057C43;">${formatJam(v.checkinAt)}</div>
+        </div>`).join('') || '<p style="color:#999;font-size:13px;">Belum ada kunjungan di rentang tanggal ini.</p>';
+
+      app.innerHTML = `
+        <div style="flex:1;overflow-y:auto;padding:22px 20px 16px;">
+          <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:20px;color:#1a1a1a;margin-bottom:16px;">Riwayat</div>
+          ${segHtml}
+          ${filterChipsHtml('kunjungan')}
+          <p style="font-size:10.5px;color:#999;margin:0 0 10px;">${formatTanggalIndo(from)} &ndash; ${formatTanggalIndo(to)} &middot; ${visits.length} kunjungan</p>
+          ${rows}
+        </div>
+        ${tabBarHtml('history')}`;
+    } else {
+      const orders = await api(`/orders?from=${from}&to=${to}`);
+      const labelMetode = { CASH: 'Cash', TEMPO: 'Tempo', CONSIGNMENT: 'Konsinyasi' };
+      const warnaMetode = { CASH: { bg: '#DFF3E7', text: '#0A5C37' }, TEMPO: { bg: '#FBF0E4', text: '#B57837' }, CONSIGNMENT: { bg: '#EAF1FA', text: '#2C5282' } };
+      const rows = orders.map(o => {
+        const orderNumber = 'SC-' + new Date(o.createdAt).toISOString().slice(0, 10).replace(/-/g, '') + '-' + o.id.slice(-4).toUpperCase();
+        const warna = warnaMetode[o.paymentMethod] || { bg: '#EEE', text: '#555' };
+        return `
+        <div onclick="receiptReturnTo='#/history/order';navigate('#/receipt/${o.id}')" style="background:#fff;border:1px solid #ECECEC;border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div style="font-size:13.5px;font-weight:700;color:#1a1a1a;margin:0 0 3px;">${esc(o.customer.name)}</div>
+              <div style="font-size:11px;color:#888888;">${orderNumber} &middot; ${new Date(o.createdAt).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' })}, ${formatJam(o.createdAt)}</div>
+            </div>
+            <div style="font-size:14px;font-weight:700;color:#057C43;white-space:nowrap;">${formatRupiah(o.totalAmount)}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed #ECECEC;">
+            <span style="font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${warna.bg};color:${warna.text};">${labelMetode[o.paymentMethod] || o.paymentMethod}</span>
+            <span style="color:#C7C7C7;font-size:15px;">&rsaquo;</span>
+          </div>
+        </div>`;
+      }).join('') || '<p style="color:#999;font-size:13px;">Belum ada order di rentang tanggal ini.</p>';
+
+      app.innerHTML = `
+        <div style="flex:1;overflow-y:auto;padding:22px 20px 16px;">
+          <div style="font-family:'Trebuchet MS',sans-serif;font-weight:700;font-size:20px;color:#1a1a1a;margin-bottom:16px;">Riwayat</div>
+          ${segHtml}
+          ${filterChipsHtml('order')}
+          <p style="font-size:10.5px;color:#999;margin:0 0 10px;">${formatTanggalIndo(from)} &ndash; ${formatTanggalIndo(to)} &middot; ${orders.length} order</p>
+          ${rows}
+        </div>
+        ${tabBarHtml('history')}`;
+    }
   } catch (err) {
     app.innerHTML = `<div style="padding:22px 20px;"><div class="error-box">${err.message}</div></div>${tabBarHtml('history')}`;
   }
