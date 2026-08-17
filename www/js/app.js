@@ -449,6 +449,13 @@ async function showAiRecommendation() {
   box.innerHTML = `<div class="card"><p style="margin:0;font-size:13px;color:#8e8e93;">Menganalisa...</p></div>`;
   try {
     const data = await api('/ai/sales-recommendation', { method: 'POST' });
+    // FITUR NONAKTIFKAN AI SALES: server mengembalikan disabled:true (bukan
+    // error) saat fitur ini dimatikan Direktur/Admin - tampilkan keterangan
+    // netral, bukan kotak error merah yang terkesan aplikasi rusak.
+    if (data.disabled) {
+      box.innerHTML = `<div class="card" style="background:#F5F6F5;border-color:#E4E4E4;"><p style="margin:0;font-size:13px;color:#777;">ℹ️ Fitur Rekomendasi AI sedang dinonaktifkan oleh Admin/Direktur.</p></div>`;
+      return;
+    }
     box.innerHTML = `<div class="card" style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${esc(data.recommendation)}</div>`;
   } catch (err) {
     box.innerHTML = `<div class="error-box">${err.message}</div>`;
