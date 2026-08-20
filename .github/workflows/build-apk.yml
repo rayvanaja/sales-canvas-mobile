@@ -26,6 +26,9 @@ jobs:
       - name: Install dependency npm
         run: npm install
 
+      - name: Tanam nomor build ke aplikasi
+        run: sed -i "s/__BUILD_NUMBER__/${{ github.run_number }}/" www/js/app.js
+
       - name: Sinkronkan Capacitor
         run: npx cap sync android
 

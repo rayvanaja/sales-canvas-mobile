@@ -1,3 +1,12 @@
+// FITUR PENOMORAN VERSI: APP_VERSION harus SELALU sama dengan yang di
+// dashboard (app.js) - satu angka untuk seluruh sistem. BUILD_NUMBER adalah
+// placeholder yang ditanam OTOMATIS oleh build-apk.yml saat APK di-compile
+// (diganti jadi nomor run GitHub Actions, mis. "18") - kalau dibuka lewat
+// browser biasa (bukan APK), placeholder ini TIDAK pernah diganti, sehingga
+// sengaja dideteksi & disembunyikan (lihat renderProfile).
+const APP_VERSION = '1.0.0';
+const BUILD_NUMBER = '__BUILD_NUMBER__';
+
 // ====== Escape HTML (K2) ======
 // Wajib dipakai untuk SEMUA teks yang berasal dari database/pengguna (nama customer,
 // alamat, telepon, nama produk, dst) sebelum ditempel ke innerHTML. Tanpa ini, siapa pun
@@ -1420,6 +1429,10 @@ async function renderProfile() {
         <div onclick="confirmLogout()" style="display:flex;align-items:center;gap:12px;padding:14px 16px;font-size:14px;color:#B3261E;cursor:pointer;">🚪 <span>Keluar</span></div>
       </div>
       <div id="change-password-box" style="margin-top:10px;"></div>
+
+      <div style="text-align:center;padding:22px 0 6px;color:#B0B0B0;font-size:10.5px;font-family:monospace;">
+        Damarindo v${APP_VERSION}${BUILD_NUMBER !== '__BUILD_NUMBER__' ? ` (build ${BUILD_NUMBER})` : ''}
+      </div>
     </div>
     ${tabBarHtml('profile')}
     <div id="logout-modal-box"></div>
