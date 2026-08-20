@@ -502,15 +502,28 @@ async function openReceiptPdf(orderId) {
 
     if (IS_NATIVE_APP && window.Capacitor?.Plugins?.Filesystem && window.Capacitor?.Plugins?.Share) {
       const base64Data = await blobToBase64(blob);
+      // FIX: dulu ditulis ke Directory.CACHE (folder sementara internal
+      // aplikasi) - kalau sales menutup menu Bagikan tanpa memilih tujuan,
+      // struknya TIDAK benar-benar tersimpan aman. Sekarang ditulis ke
+      // Directory.DOCUMENTS - persisten, terlihat lewat aplikasi File
+      // Manager (folder Documents), aman tanpa perlu izin penyimpanan
+      // tambahan di Android 10 ke atas.
       const written = await window.Capacitor.Plugins.Filesystem.writeFile({
         path: fileName,
         data: base64Data,
-        directory: 'CACHE', // tidak butuh izin penyimpanan tambahan
+        directory: 'DOCUMENTS',
       });
+
+      const statusBox = document.getElementById('receipt-save-status');
+      if (statusBox) {
+        statusBox.innerHTML = '✓ Struk tersimpan di HP (folder Dokumen)';
+        statusBox.style.display = 'block';
+      }
+
       await window.Capacitor.Plugins.Share.share({
         title: 'Struk Pesanan',
         url: written.uri,
-        dialogTitle: 'Simpan atau bagikan struk',
+        dialogTitle: 'Bagikan struk',
       });
     } else if (IS_NATIVE_APP) {
       // APK tapi plugin belum ter-sync (versi lama) - beri pesan jelas,
@@ -527,7 +540,7 @@ async function openReceiptPdf(orderId) {
   } catch (err) {
     alert(err.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Simpan Struk (PDF)'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Simpan & Bagikan'; }
   }
 }
 
@@ -586,8 +599,11 @@ async function renderReceipt(orderId) {
           <div style="text-align:center;font-size:10px;color:#555;">Bukti ini sah tanpa tanda tangan.<br>Terima kasih atas pesanan Anda.</div>
         </div>
 
+        <div id="receipt-save-status" style="display:none;width:280px;margin-top:14px;padding:9px 14px;background:#1a1a1a;color:#fff;font-size:11.5px;border-radius:10px;text-align:center;"></div>
+
         <div class="receipt-noprint" style="width:280px;margin-top:16px;display:flex;flex-direction:column;gap:10px;">
-          <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan Struk (PDF)</button>
+          <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan &amp; Bagikan</button>
+          <button onclick="kirimKeProsesPengiriman()" style="width:100%;padding:13px;border:none;border-radius:11px;background:linear-gradient(135deg,#2C5282,#1a3a63);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Kirim ke Proses Pengiriman</button>
           <button onclick="navigate('#/home')" style="width:100%;padding:13px;border:1.5px solid #D8D8D8;border-radius:11px;background:#fff;color:#303030;font-weight:700;font-size:13.5px;cursor:pointer;">Kembali ke Home</button>
         </div>
       </div>
@@ -595,6 +611,15 @@ async function renderReceipt(orderId) {
   } catch (err) {
     app.innerHTML = `<div style="padding:20px;"><div class="error-box">${err.message}</div></div>`;
   }
+}
+
+// FITUR PROSES PENGIRIMAN (placeholder): tombol sudah tersedia sesuai
+// permintaan, tapi alur bisnisnya belum ditentukan (perlu status baru?
+// notifikasi ke siapa? tampil di dashboard?) - sengaja baru menampilkan
+// info "masih dalam pengembangan" sampai alurnya dipastikan, supaya tombol
+// tidak diam saja tanpa respons kalau ditekan.
+function kirimKeProsesPengiriman() {
+  alert('Fitur "Kirim ke Proses Pengiriman" masih dalam pengembangan. Akan segera tersedia.');
 }
 
 // ====== DETAIL CUSTOMER ======
