@@ -638,7 +638,7 @@ async function renderReceipt(orderId) {
             ? `<button disabled style="width:100%;padding:13px;border:none;border-radius:11px;background:#E4E4E4;color:#8A8A8A;font-weight:700;font-size:13.5px;cursor:not-allowed;">✓ Pengiriman Sedang Diproses</button>`
             : `<button id="kirim-pengiriman-btn" onclick="kirimKeProsesPengiriman('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:linear-gradient(135deg,#2C5282,#1a3a63);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Kirim ke Proses Pengiriman</button>`}
 
-          ${isCancelled ? '' : pembatalanPending
+          ${!sudahDikirimGudang ? '' : isCancelled ? '' : pembatalanPending
             ? `<button disabled style="width:100%;padding:13px;border:none;border-radius:11px;background:#FFF6DF;color:#97650A;font-weight:700;font-size:13.5px;cursor:not-allowed;">⏳ Menunggu Persetujuan Batal</button>`
             : `<button onclick="ajukanPembatalanModal('${o.id}')" style="width:100%;padding:13px;border:1.5px solid #B3261E;border-radius:11px;background:#fff;color:#B3261E;font-weight:700;font-size:13.5px;cursor:pointer;">Ajukan Pembatalan</button>`}
 
