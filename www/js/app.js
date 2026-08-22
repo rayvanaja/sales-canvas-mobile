@@ -577,6 +577,14 @@ async function renderReceipt(orderId) {
     const tanggal = new Date(o.createdAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const payLabel = { CASH: 'Cash', TEMPO: 'Tempo', CONSIGNMENT: 'Konsinyasi' }[o.paymentMethod] || o.paymentMethod;
 
+    // FITUR PEMBATALAN ORDER: tentukan kondisi tombol dari data terbaru,
+    // supaya kalau struk dibuka lagi kapan pun (bahkan di HP lain), tampilan
+    // tombolnya langsung benar sejak awal - bukan cuma sementara di layar.
+    const isCancelled = o.status === 'CANCELLED';
+    const pembatalanReq = (o.cancellationRequests && o.cancellationRequests[0]) || null;
+    const pembatalanPending = pembatalanReq && pembatalanReq.approved === null;
+    const sudahDikirimGudang = !!o.shippingRequestSentAt;
+
     const itemRows = o.items.map(it => `
       <div style="margin-bottom:5px;">
         <div>${esc(it.product.name)}</div>
@@ -592,7 +600,8 @@ async function renderReceipt(orderId) {
       </div>
 
       <div style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;align-items:center;">
-        <div id="receipt-print-area" style="background:#fff;width:280px;padding:16px 14px;font-family:'Courier New',monospace;font-size:11.5px;color:#1a1a1a;border:1px solid #eee;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <div id="receipt-print-area" style="position:relative;background:#fff;width:280px;padding:16px 14px;font-family:'Courier New',monospace;font-size:11.5px;color:#1a1a1a;border:1px solid #eee;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          ${isCancelled ? `<div style="position:absolute;top:40%;left:50%;transform:translate(-50%,-50%) rotate(-18deg);border:3px solid #B3261E;color:#B3261E;font-weight:700;font-size:22px;padding:4px 16px;border-radius:8px;opacity:0.75;letter-spacing:1px;">DIBATALKAN</div>` : ''}
           <div style="text-align:center;margin-bottom:10px;">
             <div style="font-weight:700;font-size:14px;letter-spacing:0.5px;">DAMAR FLOUR MILLS</div>
             <div style="font-size:10px;color:#555;">PT. Damar Ampat Sekawan</div>
@@ -620,10 +629,19 @@ async function renderReceipt(orderId) {
 
         <div id="receipt-save-status" style="display:none;width:280px;margin-top:14px;padding:9px 14px;background:#1a1a1a;color:#fff;font-size:11.5px;border-radius:10px;text-align:center;"></div>
         <div id="kirim-pengiriman-status" style="display:none;width:280px;margin-top:10px;padding:9px 14px;font-size:11.5px;border-radius:10px;text-align:center;"></div>
+        <div id="pembatalan-modal-box"></div>
 
         <div class="receipt-noprint" style="width:280px;margin-top:16px;display:flex;flex-direction:column;gap:10px;">
           <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan &amp; Bagikan</button>
-          <button id="kirim-pengiriman-btn" onclick="kirimKeProsesPengiriman('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:linear-gradient(135deg,#2C5282,#1a3a63);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Kirim ke Proses Pengiriman</button>
+
+          ${sudahDikirimGudang
+            ? `<button disabled style="width:100%;padding:13px;border:none;border-radius:11px;background:#E4E4E4;color:#8A8A8A;font-weight:700;font-size:13.5px;cursor:not-allowed;">✓ Pengiriman Sedang Diproses</button>`
+            : `<button id="kirim-pengiriman-btn" onclick="kirimKeProsesPengiriman('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:linear-gradient(135deg,#2C5282,#1a3a63);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Kirim ke Proses Pengiriman</button>`}
+
+          ${isCancelled ? '' : pembatalanPending
+            ? `<button disabled style="width:100%;padding:13px;border:none;border-radius:11px;background:#FFF6DF;color:#97650A;font-weight:700;font-size:13.5px;cursor:not-allowed;">⏳ Menunggu Persetujuan Batal</button>`
+            : `<button onclick="ajukanPembatalanModal('${o.id}')" style="width:100%;padding:13px;border:1.5px solid #B3261E;border-radius:11px;background:#fff;color:#B3261E;font-weight:700;font-size:13.5px;cursor:pointer;">Ajukan Pembatalan</button>`}
+
           <button onclick="navigate('#/home')" style="width:100%;padding:13px;border:1.5px solid #D8D8D8;border-radius:11px;background:#fff;color:#303030;font-weight:700;font-size:13.5px;cursor:pointer;">Kembali ke Home</button>
         </div>
       </div>
@@ -636,7 +654,10 @@ async function renderReceipt(orderId) {
 // FITUR KIRIM KE PROSES PENGIRIMAN: mengirim detail order ke tim gudang/
 // ekspedisi lewat email. Anti-duplikat dijaga di server (shippingRequestSentAt)
 // - aman ditekan berkali-kali, tidak akan pernah mengirim email kedua untuk
-// order yang sama.
+// order yang sama. Tombol berubah PERMANEN setelah berhasil (tidak kembali
+// aktif) - status ini juga sudah benar sejak awal saat struk dibuka lagi
+// nanti, karena diperiksa dari data server (shippingRequestSentAt), bukan
+// cuma tampilan sesaat di layar.
 async function kirimKeProsesPengiriman(orderId) {
   const btn = document.getElementById('kirim-pengiriman-btn');
   const statusBox = document.getElementById('kirim-pengiriman-status');
@@ -656,10 +677,55 @@ async function kirimKeProsesPengiriman(orderId) {
       }
       statusBox.style.display = 'block';
     }
+    // Berhasil (baru terkirim ATAU memang sudah pernah) - tombol berubah
+    // PERMANEN, tidak dikembalikan aktif lagi.
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '✓ Pengiriman Sedang Diproses';
+      btn.style.background = '#E4E4E4';
+      btn.style.color = '#8A8A8A';
+      btn.style.cursor = 'not-allowed';
+    }
   } catch (err) {
     alert(err.message);
-  } finally {
+    // Gagal (mis. sinyal putus) - kembalikan tombol supaya bisa dicoba lagi.
     if (btn) { btn.disabled = false; btn.textContent = 'Kirim ke Proses Pengiriman'; }
+  }
+}
+
+// FITUR PEMBATALAN ORDER: modal isi alasan, sengaja WAJIB diisi supaya
+// Manager/Team Leader yang meninjau punya konteks jelas.
+function ajukanPembatalanModal(orderId) {
+  const box = document.getElementById('pembatalan-modal-box');
+  box.innerHTML = `
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;" onclick="if(event.target===this) this.parentElement.innerHTML=''">
+      <div style="background:#fff;border-radius:14px;padding:20px;width:100%;max-width:320px;">
+        <div style="font-size:14px;font-weight:700;color:#303030;margin-bottom:4px;">Ajukan Pembatalan</div>
+        <div style="font-size:11px;color:#888;margin-bottom:12px;">Order ini akan diperiksa Team Leader/Manager sebelum benar-benar dibatalkan.</div>
+        <label style="font-size:10.5px;font-weight:700;color:#555;display:block;margin-bottom:5px;">ALASAN PEMBATALAN</label>
+        <textarea id="pembatalan-reason-input" rows="4" placeholder="Jelaskan alasan pembatalan order ini..." style="width:100%;border:1.5px solid #D8D8D8;border-radius:9px;padding:10px;font-size:12.5px;font-family:inherit;resize:none;box-sizing:border-box;"></textarea>
+        <div id="pembatalan-modal-error" style="margin-top:6px;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button style="flex:1;border:none;background:#B3261E;color:#fff;padding:11px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;" onclick="kirimPengajuanPembatalan('${orderId}')">Kirim Pengajuan</button>
+          <button style="flex:1;border:1.5px solid #D8D8D8;background:#fff;color:#303030;padding:11px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;" onclick="document.getElementById('pembatalan-modal-box').innerHTML=''">Batal</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function kirimPengajuanPembatalan(orderId) {
+  const reason = document.getElementById('pembatalan-reason-input').value.trim();
+  const errBox = document.getElementById('pembatalan-modal-error');
+  if (!reason) {
+    errBox.innerHTML = `<div class="error-box" style="margin:0;">Alasan pembatalan wajib diisi.</div>`;
+    return;
+  }
+  try {
+    await api(`/orders/${orderId}/ajukan-pembatalan`, { method: 'POST', body: JSON.stringify({ reason }) });
+    document.getElementById('pembatalan-modal-box').innerHTML = '';
+    renderReceipt(orderId);
+  } catch (err) {
+    errBox.innerHTML = `<div class="error-box" style="margin:0;">${esc(err.message)}</div>`;
   }
 }
 
