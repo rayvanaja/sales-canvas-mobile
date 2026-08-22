@@ -67,15 +67,26 @@ async function api(path, options = {}) {
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
   if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
 
+  // FIX: fetch() TIDAK PUNYA batas waktu tunggu sama sekali secara bawaan -
+  // kalau sinyal sempat putus-nyambung tepat saat permintaan terkirim
+  // (sampai ke server tapi jawabannya tak pernah kembali ke HP), tombol di
+  // layar bisa menunggu SELAMANYA sampai memicu peringatan "aplikasi tidak
+  // merespons" dari Android. Sekarang dibatasi maksimal 30 detik - cukup
+  // panjang untuk permintaan yang genuinely lambat (mis. AI), tapi tombol
+  // tidak akan pernah macet tanpa batas lagi.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
   let res;
   try {
-    res = await fetch(API + path, { ...options, headers });
+    res = await fetch(API + path, { ...options, headers, signal: controller.signal });
   } catch (networkErr) {
-    // FIX: fetch() yang gagal total (tidak ada sinyal/koneksi terputus) dulu
-    // melempar pesan mentah teknis (mis. "Failed to fetch") yang membingungkan
-    // sales di lapangan. Sekarang diterjemahkan ke pesan yang jelas - berlaku
-    // untuk SEMUA pemanggilan api(), bukan cuma order.
+    if (networkErr.name === 'AbortError') {
+      throw new Error('Server tidak merespons dalam waktu wajar. Periksa sinyal internet Anda, lalu coba lagi.');
+    }
     throw new Error('Tidak bisa terhubung ke server. Periksa sinyal internet Anda, lalu coba lagi.');
+  } finally {
+    clearTimeout(timeoutId);
   }
   const data = await res.json().catch(() => ({}));
 
@@ -122,11 +133,19 @@ async function apiRaw(path, options = {}) {
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
   if (IS_NATIVE_APP) headers['X-Client-App'] = 'sales-canvas-apk';
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
   let res;
   try {
-    res = await fetch(API + path, { ...options, headers });
+    res = await fetch(API + path, { ...options, headers, signal: controller.signal });
   } catch (networkErr) {
+    if (networkErr.name === 'AbortError') {
+      throw new Error('Server tidak merespons dalam waktu wajar. Periksa sinyal internet Anda, lalu coba lagi.');
+    }
     throw new Error('Tidak bisa terhubung ke server. Periksa sinyal internet Anda, lalu coba lagi.');
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (res.status === 401 && state.token) {
