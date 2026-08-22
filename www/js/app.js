@@ -600,10 +600,11 @@ async function renderReceipt(orderId) {
         </div>
 
         <div id="receipt-save-status" style="display:none;width:280px;margin-top:14px;padding:9px 14px;background:#1a1a1a;color:#fff;font-size:11.5px;border-radius:10px;text-align:center;"></div>
+        <div id="kirim-pengiriman-status" style="display:none;width:280px;margin-top:10px;padding:9px 14px;font-size:11.5px;border-radius:10px;text-align:center;"></div>
 
         <div class="receipt-noprint" style="width:280px;margin-top:16px;display:flex;flex-direction:column;gap:10px;">
           <button id="print-receipt-btn" onclick="openReceiptPdf('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:#057C43;color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Simpan &amp; Bagikan</button>
-          <button onclick="kirimKeProsesPengiriman()" style="width:100%;padding:13px;border:none;border-radius:11px;background:linear-gradient(135deg,#2C5282,#1a3a63);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Kirim ke Proses Pengiriman</button>
+          <button id="kirim-pengiriman-btn" onclick="kirimKeProsesPengiriman('${o.id}')" style="width:100%;padding:13px;border:none;border-radius:11px;background:linear-gradient(135deg,#2C5282,#1a3a63);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;">Kirim ke Proses Pengiriman</button>
           <button onclick="navigate('#/home')" style="width:100%;padding:13px;border:1.5px solid #D8D8D8;border-radius:11px;background:#fff;color:#303030;font-weight:700;font-size:13.5px;cursor:pointer;">Kembali ke Home</button>
         </div>
       </div>
@@ -613,13 +614,34 @@ async function renderReceipt(orderId) {
   }
 }
 
-// FITUR PROSES PENGIRIMAN (placeholder): tombol sudah tersedia sesuai
-// permintaan, tapi alur bisnisnya belum ditentukan (perlu status baru?
-// notifikasi ke siapa? tampil di dashboard?) - sengaja baru menampilkan
-// info "masih dalam pengembangan" sampai alurnya dipastikan, supaya tombol
-// tidak diam saja tanpa respons kalau ditekan.
-function kirimKeProsesPengiriman() {
-  alert('Fitur "Kirim ke Proses Pengiriman" masih dalam pengembangan. Akan segera tersedia.');
+// FITUR KIRIM KE PROSES PENGIRIMAN: mengirim detail order ke tim gudang/
+// ekspedisi lewat email. Anti-duplikat dijaga di server (shippingRequestSentAt)
+// - aman ditekan berkali-kali, tidak akan pernah mengirim email kedua untuk
+// order yang sama.
+async function kirimKeProsesPengiriman(orderId) {
+  const btn = document.getElementById('kirim-pengiriman-btn');
+  const statusBox = document.getElementById('kirim-pengiriman-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Mengirim...'; }
+  try {
+    const data = await api(`/orders/${orderId}/kirim-proses-pengiriman`, { method: 'POST' });
+    if (statusBox) {
+      if (data.alreadySent) {
+        const waktu = new Date(data.sentAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+        statusBox.innerHTML = `ℹ️ Sudah pernah dikirim sebelumnya, ${waktu}`;
+        statusBox.style.background = '#FFF6DF';
+        statusBox.style.color = '#97650A';
+      } else {
+        statusBox.innerHTML = `✓ ${esc(data.message)}`;
+        statusBox.style.background = '#1a1a1a';
+        statusBox.style.color = '#fff';
+      }
+      statusBox.style.display = 'block';
+    }
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Kirim ke Proses Pengiriman'; }
+  }
 }
 
 // ====== DETAIL CUSTOMER ======
